@@ -123,8 +123,11 @@ class BrowserManager:
         「换一种登录方式」的核心：用户在自己的正常浏览器（Chrome/Edge）里
         已经正常登录、人机验证也在那边完成，这里只搬运登录凭证 Cookie
         （如 LinkedIn 的 li_at / JSESSIONID），彻底绕开"自动化浏览器里
-        reCAPTCHA 加载不出来"的死结。注入的 Cookie 会随 persistent
-        context 持久化到 data/browser/<source>/，之后抓取自动复用。
+        reCAPTCHA 加载不出来"的死结。
+
+        重要（2026-10-14 实测）：注入的 Cookie **不会写进磁盘 profile**，
+        关闭浏览器即消失。所以调用方需要在每次启动时重新注入，或者改用在
+        浏览器里手动登录一次（那条路径由浏览器自己落盘，才真正持久）。
         """
         page = self.launch(source_key)   # 确保 context 已创建
         ctx = self._contexts[source_key]

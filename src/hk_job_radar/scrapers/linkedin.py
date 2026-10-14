@@ -135,8 +135,11 @@ class LinkedInScraper(BaseScraper):
     # ------------------------------------------------------------------
     def _do_fetch(self, last_seen_cutoff: datetime) -> list[JobPosting]:
         page = self.browser.launch(self.source_name)
-        # 重新注入登录凭证：persistent context 的 add_cookies 不落盘，
-        # 所以每次启动都从本地缓存文件重新注入一次，保证登录态持续有效。
+        # 重新注入登录凭证。注意：add_cookies() 在 persistent context 上
+        # **不会落盘**（实测：注入后重启浏览器即消失），所以必须每次启动重注入。
+        # 本文件只在使用 `import_linkedin_cookie.bat`（搬运正常浏览器 Cookie）时
+        # 才会生成；若你是用 login_linkedin.bat 在浏览器里手动登录的，登录态由
+        # profile 自己持久化（data/browser/linkedin/），此处注入的旧值不会生效。
         session_cookies = load_session()
         if session_cookies:
             self.browser.inject_cookies(self.source_name, session_cookies)
@@ -144,8 +147,11 @@ class LinkedInScraper(BaseScraper):
         seen: set[str] = set()
         loc = quote_plus(self.config.location or "Hong Kong")
         limit_hit = False             # 当日配额在途中用尽：保留已抓结果后收手
-
-        self._warn_if_not_logged_in(page)
+        # 登录态检查必须等页面真正跳到 LinkedIn 之后再判断：
+        # launch() 刚返回的页面是 about:blank，URL 与正文都是空的，
+        # ensure_logged_in() 此时必然返回 False → 无论是否已登录都会误报
+        # 「未检测到登录态」。因此延迟到第一次 goto 之后再检查，且只检查一次。
+        login_checked = False
 
         for keyword in self.active_keywords():
             # 岗位类型 → LinkedIn f_JT 参数（按关键词动态生成）：
@@ -175,6 +181,10 @@ class LinkedInScraper(BaseScraper):
                         "  请运行 `python run.py login linkedin` 用【求职专用小号】登录一次，\n"
                         "  登录态保存在 data/browser/linkedin/，之后自动复用。")
                     break
+                # 页面已真正加载，此时判断登录态才有意义（只判断第一次）
+                if not login_checked:
+                    login_checked = True
+                    self._warn_if_not_logged_in(page)
                 # 关键：LinkedIn 页面存在长连接（实时推送等），networkidle 几乎
                 # 永不触发，直接等它会在 30s 后抛超时异常、拖垮整轮抓取。
                 # 改为"等岗位卡片出现"（有结果时），超时也放行交给解析判定。
@@ -204,7 +214,11 @@ class LinkedInScraper(BaseScraper):
 
     # ------------------------------------------------------------------
     def _warn_if_not_logged_in(self, page) -> None:
-        """未登录时给出中文指引（不自动登录、不接受账号密码）。"""
+        """未登录时给出中文指引（不自动登录、不接受账号密码）。
+
+        必须在 page 已经 goto 到 LinkedIn 之后调用：刚 launch 出来的
+        页面是 about:blank，此时检查必然误判为「未登录」。
+        """
         if self.browser.ensure_logged_in(page, r"linkedin\.com/jobs"):
             return
         logger.warning(
