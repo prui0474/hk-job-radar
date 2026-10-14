@@ -1,0 +1,19 @@
+# 换行符规范（重要，勿删）
+#
+# 为什么必须锁定 .bat 的换行符：
+#   Windows 的 cmd.exe 解析批处理时按「行」读取。LF 换行的 .bat 会让它解析错位，
+#   一旦文件里还有中文，会出现「'xxx' 不是内部或外部命令」这类诡异报错
+#   （见提交 b87abc6 的完整分析）。而 git 默认的 core.autocrlf 会把 .bat
+#   在仓库里存成 LF —— 于是「我这台机器能用、别人 clone 下来是坏的」。
+#   用 eol=crlf 明确指定后，无论对方 git 怎么配置、从哪个平台 clone，
+#   检出的 .bat 都一定是 CRLF。
+#
+# 另外：GitHub 网页上的 Code → Download ZIP 也遵循本文件的规则，
+#       所以走下载 ZIP 这条路的用户同样拿到正确的 .bat。
+
+* text=auto
+
+*.bat text eol=crlf
+
+# Linux/macOS 的 shell 脚本反过来，必须是 LF
+*.sh  text eol=lf
