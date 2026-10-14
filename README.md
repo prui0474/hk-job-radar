@@ -108,12 +108,19 @@ flowchart LR
 1. Install [Python](https://www.python.org/downloads/) — tick **"Add python.exe to PATH"**.
 2. On this page click **Code → Download ZIP**, then unzip it.
 3. Double-click **`install.bat`** — it sets everything up and asks for your DeepSeek key.
-4. Open `config.yaml` in Notepad → fill `bot_token` & `chat_id`
-   (exact steps in the [beginner's guide](docs/getting-started-zh.md)).
-5. Double-click **`login_jobsdb.bat`** once (Cloudflare pass-through).
-6. Double-click **`start.bat`** (keep it running) — or **`run_once.bat`** for a
+4. Open `config.yaml` in Notepad → fill `bot_token` & `chat_id`, **and replace
+   `keywords` with your own target roles** (the template ships with neutral examples).
+5. Open `data/profiles/profile.yaml` in Notepad → fill in **your own background**
+   (this is what the LLM scores jobs against — don't skip it).
+6. Double-click **`login_jobsdb.bat`** once (Cloudflare pass-through).
+7. Double-click **`start.bat`** (keep it running) — or **`run_once.bat`** for a
    single sweep. Either way you get a Telegram digest the first time you run it
    that day, and new high-scoring jobs are pushed as they appear.
+
+> Steps 4–5 are the two things the installer **cannot** do for you: describing *what
+> you're looking for* and *who you are*. Skip them and the tool still runs, but it
+> will fetch the wrong roles and score them against an empty profile.
+> Exact click-by-click steps: [beginner's guide](docs/getting-started-zh.md) (Chinese).
 
 **Option B — Manual (terminal, one-time setup)**
 
@@ -174,8 +181,14 @@ Everything is in `config.yaml` (see `config.example.yaml` for commented defaults
 | `telegram` | bot token + chat id |
 | `score_threshold` / `realtime_threshold` | 60 = daily, 80 = instant push |
 
-The `background` section of `data/profiles/profile.yaml` drives LLM scoring — edit it
-to match your own skills, experience, and target roles.
+The `background` section of `data/profiles/profile.yaml` drives LLM scoring — **you must
+replace the placeholders with your own** skills, experience, and target roles. If that
+section is missing or still holds only `<placeholders>`, the tool falls back to a generic
+description and scores become far less meaningful.
+
+> 中文：`data/profiles/profile.yaml` 的 `background:` 段是 AI 打分的依据，**必须换成
+> 你自己的**背景与目标岗位。若该段缺失、或仍是一堆 `<占位符>`，程序会退回一段通用
+> 描述来打分，分数参考价值很低（但不会报错——这是最容易被忽略的一步）。
 
 ### Compliance & safety
 
@@ -261,11 +274,17 @@ hk_job_radar/
 1. 安装 [Python](https://www.python.org/downloads/)——务必勾选 **"Add python.exe to PATH"**
 2. 在本页面点 **Code → Download ZIP**，下载后解压
 3. 双击 **`install.bat`**——自动装好一切，还会引导你填 DeepSeek key
-4. 用记事本打开 `config.yaml` → 填 `bot_token` 和 `chat_id` 两行
-   （每一步点哪里，见[保姆级新手教程](docs/getting-started-zh.md)）
-5. 双击一次 **`login_jobsdb.bat`**（过一次防护验证）
-6. 双击 **`start.bat`**（保持窗口开着）；只想跑一轮就双击 **`run_once.bat`**。
+4. 用记事本打开 `config.yaml` → 填 `bot_token` 和 `chat_id` 两行，
+   **并把 `keywords` 换成你自己要找的岗位**（模板自带的是中性示例词）
+5. 用记事本打开 `data/profiles/profile.yaml` → 填**你自己的真实背景**
+   （这是 AI 打分所依据的画像，别跳过）
+6. 双击一次 **`login_jobsdb.bat`**（过一次防护验证）
+7. 双击 **`start.bat`**（保持窗口开着）；只想跑一轮就双击 **`run_once.bat`**。
    当天第一次运行就会收到一份 Telegram 日报，之后新出现的达标岗位会实时推送。
+
+> 第 4、5 步是安装脚本**唯一帮不了你**的两件事：**你想找什么**、**你是谁**。
+> 跳过它们，程序照样会跑，但会抓错岗位、再拿一份空画像去打分。
+> 每一步点哪里，见[保姆级新手教程](docs/getting-started-zh.md)。
 
 **方式 B —— 手动安装（终端，只需一次）**
 

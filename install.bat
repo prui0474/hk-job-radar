@@ -97,16 +97,21 @@ echo [OK] key 已保存到 api_key.txt（此文件不会上传到 GitHub）。
 
 echo.
 echo ============================================
-echo   安装完成！接下来还剩 3 件小事：
+echo   安装完成！接下来还剩 4 件小事：
 echo.
-echo   1. 用记事本打开 config.yaml，填 2 行：
+echo   1. 记事本打开 config.yaml，填 2 行：
 echo        bot_token: 去 Telegram 找 @BotFather 创建机器人
 echo                   后复制粘贴
 echo        chat_id:   给你的机器人发条消息，然后按
 echo                   教程里的方法获取（很简单）
-echo   2. 双击 login_jobsdb.bat 完成一次防护验证
+echo       （同一文件里，把 keywords 换成你自己要找的岗位！）
+echo   2. 记事本打开 data\profiles\profile.yaml，
+echo        填你自己的真实背景。这决定 AI 打分准不准，
+echo        别跳过。填法：把简历贴给 DeepSeek，让它按
+echo        模板格式生成（教程第 7 步有现成话术）。
+echo   3. 双击 login_jobsdb.bat 完成一次防护验证
 echo      （会弹出浏览器，点一下验证就行）
-echo   3. 双击 start.bat 开始监控！
+echo   4. 双击 start.bat 开始监控！
 echo.
 echo   超详细新手教程（每一步点哪里、看到什么）：
 echo   用记事本打开 docs\getting-started-zh.md

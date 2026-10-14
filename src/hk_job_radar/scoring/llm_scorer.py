@@ -23,16 +23,20 @@ from loguru import logger
 from hk_job_radar.config import LLMConfig
 from hk_job_radar.models import JobPosting, ScoringResult
 
-# 兜底画像：profile.yaml 缺失/无 background 段时使用（U4 决策的默认占位）
-# 注意（合规）：学生签证在读期间只能实习/兼职，全职违法；但「毕业后入职」
-# 的管培生/毕业生项目（management trainee / graduate programme）合法，
-# 因为入职时已毕业并持有 IANG。因此这里把两类分开写。
+# 兜底画像：profile.yaml 缺失/无 background 段时使用。
+#
+# 这里刻意只保留「一名香港求职者」的中性描述，不含任何具体个人背景，原因有两条：
+#   1. 本文件是公开源码——一旦写入真实背景（学校 / 专业 / 目标方向），就等于公开；
+#   2. 若兜底沿用某位使用者的画像，别人的打分口径会被悄悄带偏（例如找一个完全
+#      无关方向的岗位，却被按「数据类」标准打分）。
+# 正常安装会在 data/profiles/ 生成 profile.yaml（已被 .gitignore 忽略）；
+# 使用者按文档填好自己的 background 段后，本兜底即不再生效。
+# 合规说明：学生签证在读期间只能实习/兼职，全职违法；「毕业后入职」的管培生 /
+# 毕业生项目（management trainee / graduate programme）因入职时已持 IANG 而合法。
 _FALLBACK_PROFILE = (
-    "香港城市大学数据科学硕士在读学生（约一年后毕业）。当前求职阶段主要找香港的"
-    "实习（internship）与兼职（part-time）岗位——学生签证在读期间不可全职工作；"
-    "同时投递「毕业后入职」的管理培训生/毕业生项目（management trainee / "
-    "graduate programme），这类岗位毕业转 IANG 后合法入职。"
-    "求职方向为数据科学/数据分析/数据工程类。熟悉 Python、SQL、机器学习基础。"
+    "一名正在香港求职的应届毕业生 / 在读学生，当前主要寻找实习（internship）与"
+    "兼职（part-time）岗位；同时也考虑「毕业后入职」的管理培训生 / 毕业生项目"
+    "（management trainee / graduate programme）。未提供更详细的个人背景信息。"
 )
 
 # 系统提示词：强调输出纪律（只要 JSON，不要解释），这是稳定解析的关键
@@ -52,7 +56,18 @@ class LLMScorer:
 
     def __init__(self, config: LLMConfig, user_profile_prompt: str) -> None:
         self.config = config
-        self.user_profile_prompt = (user_profile_prompt or "").strip() or _FALLBACK_PROFILE
+        profile = (user_profile_prompt or "").strip()
+        if profile:
+            self.user_profile_prompt = profile
+        else:
+            # 画像缺失是「程序照跑、但分数会失真」的软故障，必须让使用者看得见，
+            # 否则新手会拿着错的分数做决策，还以为工具坏了。
+            logger.warning(
+                "未配置个人画像（data/profiles/profile.yaml 的 background 段）："
+                "本次打分改用通用兜底描述，相关度分数会明显偏粗。"
+                "请按文档填写你自己的画像后重新运行。"
+            )
+            self.user_profile_prompt = _FALLBACK_PROFILE
         # 延迟创建 OpenAI 客户端：key 可能未配置，等第一次真正打分时再报降级
         self._client = None
 
