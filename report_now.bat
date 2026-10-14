@@ -8,16 +8,18 @@ set "PY="
 if exist ".venv\Scripts\python.exe" set "PY=.venv\Scripts\python.exe"
 if not defined PY if exist ".venv_test\Scripts\python.exe" set "PY=.venv_test\Scripts\python.exe"
 if not defined PY (
-    echo 还没有安装运行环境。
-    echo 请先双击 install.bat 完成一键安装（只需一次），再回来双击本文件。
+    echo [X] Python environment not found.
+    echo     Please run install.bat first, then try again.
     pause
     exit /b 1
 )
 
 "%PY%" run.py report now
+
 echo.
-echo ============================================
-echo 日报已尝试推送。如果上方有红色报错，请截图发给我。
-echo （若提示"没有待推送的新岗位"，说明还没跑过抓取，先双击 start.bat）
-echo ============================================
+echo ---------------------------------------------
+echo Digest push attempted.
+echo If it says "no new jobs to push", run start.bat first.
+echo Screenshot any red error above and ask for help.
+echo ---------------------------------------------
 pause

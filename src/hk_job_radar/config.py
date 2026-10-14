@@ -304,12 +304,24 @@ def require_telegram(cfg: AppConfig) -> None:
 
 
 def require_llm_key(cfg: AppConfig) -> None:
-    """run 命令的 LLM 门禁：key 缺失时提示（打分会全部降级为未打分）。"""
+    """run / once 命令的 LLM 门禁：key 缺失时给出可直接照做的三种补法。"""
     if not cfg.llm.resolve_api_key():
         raise ConfigError(
-            f"未设置环境变量 {cfg.llm.api_key_env}：LLM 打分无法工作。\n"
-            f"  PowerShell 临时设置：$env:{cfg.llm.api_key_env} = \"sk-你的key\"\n"
-            f"  或永久设置（用户级）：setx {cfg.llm.api_key_env} \"sk-你的key\"（设置后需重开终端）"
+            f"未配置 {cfg.llm.api_key_env}（DeepSeek 的 key），LLM 打分无法工作。\n"
+            f"\n"
+            f"  方式一 · 最省事（双击 start.bat / run_once.bat 的用户用这个）：\n"
+            f"      在项目文件夹里新建一个文本文件，命名为 api_key.txt，\n"
+            f"      打开后只写你那一串 key（sk- 开头），保存即可。\n"
+            f"      这两个 bat 启动时会自动读取它，无需其它设置。\n"
+            f"\n"
+            f"  方式二 · 临时（只在当前 PowerShell 窗口有效）：\n"
+            f"      $env:{cfg.llm.api_key_env} = \"sk-你的key\"\n"
+            f"\n"
+            f"  方式三 · 永久（写入用户级环境变量，之后新开的窗口都生效）：\n"
+            f"      setx {cfg.llm.api_key_env} \"sk-你的key\"\n"
+            f"\n"
+            f"  还没有 key？打开 https://platform.deepseek.com 注册登录，\n"
+            f"  左侧点 API Keys → 创建，复制那串 sk- 开头的文字。"
         )
 
 

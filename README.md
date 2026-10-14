@@ -139,8 +139,8 @@ playwright install chromium
 Copy-Item config.example.yaml config.yaml
 Copy-Item data/profiles/profile.example.yaml data/profiles/profile.yaml
 
-# 4. LLM key (env var, never in files)
-$env:DEEPSEEK_API_KEY = "sk-..."
+# 4. LLM key — either an env var, or a one-line api_key.txt next to config.yaml
+$env:DEEPSEEK_API_KEY = "sk-..."      # env var (or: create api_key.txt containing just sk-...)
 
 # 5. Edit config.yaml → fill telegram.bot_token & telegram.chat_id
 
