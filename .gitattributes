@@ -17,3 +17,6 @@
 
 # Linux/macOS 的 shell 脚本反过来，必须是 LF
 *.sh  text eol=lf
+
+# git 自身的配置文件一律 LF（放在最后，优先级最高）
+.gitattributes text eol=lf
