@@ -1,0 +1,138 @@
+# =====================================================================
+# 个人资料库模板 profile.example.yaml（脱敏占位版本）
+#
+# 使用方法：
+#   1. 复制本文件为同目录下的 profile.yaml：
+#      Windows PowerShell:  Copy-Item profile.example.yaml profile.yaml
+#   2. 把下面的 <占位符> 全部替换成你自己的真实信息。
+#   3. 保存后即可生效（background 段是 LLM 打分 prompt 的核心，改完即热更新）。
+#
+# 注意：profile.yaml 位于 data/ 目录下，已被 .gitignore 忽略，不会上传到
+#       GitHub，你的个人信息不会泄露。提交到仓库的只有本模板（占位符版本）。
+# =====================================================================
+
+# ---- LLM 打分画像（英文：与英文岗位描述的语义匹配效果最好）----
+# 提示：把背景写具体（尤其是「排除项」和「目标岗位顺序」），打分更准。
+background: |
+  Candidate profile for LLM relevance scoring (Hong Kong job market):
+
+  IDENTITY
+  - <Your Name>. MSc in <Your Programme>, <Your University>
+    (Sep 2026 – Jun 2027, expected graduation June 2027).
+  - BSc in <Your Undergrad Major>, <Your Undergrad University>, graduated 2026.
+  - Honest self-assessment: <your strengths>; <your weaker areas>.
+
+  CURRENT SEARCH (IMPORTANT — compliance constraint)
+  - INTERNSHIP & PART-TIME ROLES for work DURING studies (student visa permits
+    these). PLUS: apply to "post-graduation" Management Trainee / Graduate
+    Programme roles that START after graduation — these are full-time but the
+    start date is after IANG, so they are legal and high-priority NOW.
+  - Exclude full-time roles that require starting BEFORE graduation (illegal on
+    a student visa); exclude all immediate-start full-time roles.
+
+  TECHNICAL SKILLS
+  - Languages: <Python / SQL / R / ...>
+  - BI/visualisation: <Tableau / Power BI / ...>
+  - Analytics toolkit: <regression, time-series, machine learning, ...>
+
+  WORK EXPERIENCE
+  - <Company>, <Role> Intern, <Location> (<period>): <one-line achievement>.
+  - <Company>, <Role> Intern, <Location> (<period>): <one-line achievement>.
+
+  PROJECTS & COMPETITIONS
+  - <Project/competition name>: <one-line result>.
+
+  LANGUAGES
+  - <Language list, e.g. Mandarin (native), English (fluent)>.
+
+  WORK AUTHORIZATION (important for screening questions)
+  - Currently on a Hong Kong STUDENT VISA.
+  - After graduation (June 2027) eligible to apply for the IANG visa
+    INDEPENDENTLY — employer sponsorship is NOT required.
+  - Before graduation, full-time work needs employer-assisted work visa;
+    internships / part-time work are permitted under the student visa.
+
+  TARGET ROLES (priority order)
+  1. <Role 1> Intern / Part-time
+  2. <Role 2> Intern / Part-time
+  3. Bank / corporate Management Trainee & graduate programmes (post-graduation)
+  4. <Role 3>
+
+  INDUSTRY PREFERENCE
+  - <Finance / technology / consulting / ...>
+
+  COMPENSATION & CONSTRAINTS
+  - CURRENT STAGE (internship / part-time): <expected student-intern pay range>.
+  - AFTER graduation (IANG full-time): minimum expectation around <HKD amount>/month.
+  - Hong Kong only; open to hybrid, not to relocation.
+
+  EXCLUSIONS (score these very low)
+  - Full-time roles requiring start BEFORE graduation.
+  - Pure data entry / manual data processing with no analytics content.
+  - Heavy production-level software engineering or senior SWE roles.
+  - Extreme overtime (996) culture roles; sales-only / commission-only roles.
+  - Roles unrelated to <your target field>.
+
+# ---- 基础信息（投递副驾填表用）----
+basic:
+  name_en: "<Your Name>"
+  name_zh: "<你的中文名>"
+  email: "<your@email.com>"
+  phone: "+852 <your phone>"
+  location: "Hong Kong"
+  linkedin: "https://www.linkedin.com/in/<your-profile>"
+
+education:
+  - school: "<Your University>"
+    degree: "MSc in <Your Programme>"
+    period: "<start> - <end> (expected)"
+    detail: "<coursework summary>"
+  - school: "<Your Undergrad University>"
+    degree: "BSc in <Your Major>"
+    period: "<start> - <end>"
+    detail: "<highlight, e.g. top X% of cohort>"
+
+work_experience:
+  - company: "<Company>"
+    title: "<Role> Intern"
+    period: "<start> - <end>"
+    location: "<City, Country>"
+  - company: "<Company>"
+    title: "<Role> Intern"
+    period: "<start> - <end>"
+    location: "<City, Country>"
+
+work_authorization:
+  visa_type: "student visa"
+  iang_eligible_after_graduation: true
+  need_sponsorship: false
+  graduation_date: "<YYYY-MM>"
+  note: >-
+    On a Hong Kong student visa. After graduating I can apply for the IANG visa
+    myself with no employer sponsorship required. Before graduation, full-time
+    work requires employer-assisted work visa; internships/part-time permitted.
+
+job_preferences:
+  target_roles:
+    - "<Role 1>"
+    - "<Role 2>"
+    - "Management Trainee (bank / graduate programme)"
+    - "<Role 3>"
+  expected_salary: "HKD <amount>+/month (junior/graduate level)"
+  preferred_industries: ["<finance>", "<technology>", "<consulting>"]
+  location: "Hong Kong (hybrid acceptable)"
+  availability: "Full-time from <month/year>; internships/part-time available during study"
+
+# ---- 筛选问题答题口径（投递副驾生成答案时的标准口径，AI 生成后仍需人工确认）----
+screening_rules:
+  visa_sponsorship: >-
+    I am currently on a Hong Kong student visa and will graduate in <month year>.
+    After graduation I am eligible to apply for the IANG visa independently, so
+    I do not require employer sponsorship.
+  work_location: "On-site or hybrid in Hong Kong; I am based in Hong Kong."
+  expected_salary: "Around HKD <amount> per month for a graduate/junior role, negotiable."
+  availability: "Available for full-time from <month/year>; available for internship or part-time work during my studies."
+  notice_period: "Immediately available for internships; full-time from <month year>."
+  language_skills: "<Language skills summary>."
+  why_fit: >-
+    <One-paragraph pitch: your background + a concrete achievement + what you bring.>

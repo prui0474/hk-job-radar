@@ -1,0 +1,11 @@
+# 香港岗位雷达 · 依赖声明
+# 说明：架构文档原稿将 playwright 钉死在 1.44.0，但 1.44 的 wheel 不支持
+# Python 3.13（本项目验证环境为 3.13），因此放宽为 >=1.44，安装时会自动
+# 选择兼容当前 Python 版本的最新版。其余依赖同样采用"下限 + 语义化"约束。
+playwright>=1.44          # 浏览器自动化（安装后需执行: playwright install chromium）
+apscheduler>=3.10,<4      # 定时调度（3.x 的 BlockingScheduler，刻意不上 4.x 新 API）
+openai>=1.30              # LLM SDK（DeepSeek 完全兼容 OpenAI API，只需改 base_url）
+requests>=2.31            # Telegram Bot API 直调 + 通用 HTTP
+PyYAML>=6.0               # 配置文件与个人资料库解析
+loguru>=0.7.2             # 日志（一行配置滚动文件，比 stdlib logging 模板代码少）
+tenacity>=8.2             # 重试与指数退避（装饰器式，比手写 retry 循环可靠）

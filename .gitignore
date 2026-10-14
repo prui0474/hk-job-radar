@@ -1,0 +1,49 @@
+# 运行时数据（SQLite 库、浏览器配置、日志）——全部不进 git
+data/*
+# 但个人画像的【脱敏模板】要提交（真实 profile.yaml 仍被忽略）
+!data/profiles/
+data/profiles/*
+!data/profiles/profile.example.yaml
+
+# 真实配置（含 token），只提交模板 config.example.yaml
+config.yaml
+
+# 绑定本机个人求职方向的「守卫测试」——里面写死了关键词总数与目标岗位，
+# 属于个人数据；公开仓库只放 test_keyword_revision.py（纯机制测试）。
+# 本地跑 pytest 时该文件仍会执行，因为它只是被 git 忽略、并未删除。
+tests/test_personal_config.py
+
+# 配置备份：config.yaml.bak-xxx 里同样带着 Telegram token / API key，
+# 而 "config.yaml" 这条只精确匹配文件名、盖不住 .bak 后缀 —— 必须单独忽略，
+# 否则 git add . 会把带凭据的备份推进公开仓库。
+config.yaml.bak*
+*.bak-*
+
+# 任何形式的密钥/凭证文件（API key、token、session）——绝不入库
+api_key.txt
+*.key
+*.token
+*_token*
+*.secret
+.env
+.env.*
+!.env.example
+
+# Python 产物
+__pycache__/
+*.py[cod]
+.venv/
+.venv_test/
+venv/
+*.egg-info/
+
+# 个人工作日志（含本人求职方向、关键词表、开机习惯等）——只在本地保留，
+# 不进公开仓库。公开仓库只放通用文档（README、docs/getting-started-zh.md、
+# docs/uptime-strategy.md）。
+docs/KEYWORD_REVISION_*.md
+
+# 编辑器/系统杂项
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,145 @@
+# =====================================================================
+# 香港岗位雷达 · 配置模板
+# 使用方法：复制本文件为同目录下的 config.yaml，再按需修改。
+#   Windows PowerShell:  Copy-Item config.example.yaml config.yaml
+# config.yaml 已加入 .gitignore，凭据永不入库。
+# 配置只在进程启动时读取一次，修改后需重启生效（PRD P0-7 约定）。
+# =====================================================================
+
+# ---- 抓取站点开关（三站适配器均已交付并实测）----
+# true = 启用该站监控。三站均已跑通。
+# ⚠️ LinkedIn 请务必用【求职专用小号】登录一次（python run.py login linkedin），
+#    主号的人脉与推荐信资产不要暴露在自动化活动中；未登录会被节流跳登录墙。
+# ⚠️ Indeed 会拦截无头浏览器，抓取时会弹出一个可见的浏览器窗口（属正常现象），
+#    请勿在抓取进行中关闭该窗口。
+sources:
+  jobsdb: true
+  linkedin: true
+  indeed: true
+
+# =============================================================================
+#  ★★ 拿到本文件后第一件事：把下面的关键词换成【你自己的求职方向】★★
+# =============================================================================
+# 作用：只有「岗位标题或摘要」命中这里任一关键词的岗位，才会进入 AI 打分环节；
+#      其余直接丢弃。这一层是免费的（纯字符串匹配），专门用来把噪音挡在
+#      按次计费的 AI 打分之前。
+#
+# 怎么填 —— 四条规则，照着做就不会踩坑：
+#
+#   1) 写「岗位名称」，英文小写，一行一个。
+#      香港招聘网站的岗位标题以英文为主，所以用英文词命中率最高。
+#
+#   2) 【只写岗位名称，绝不写技能名词】。
+#      因为匹配范围包含岗位描述，而 "python" / "sql" / "excel" / "power bi"
+#      这类技能词几乎每份 JD 都会提到——加进去等于没有筛选，AI 费用白花。
+#
+#   3) 【不要写两三个字母的短词】。
+#      "ai" 会命中 email / available / certain；"ml" 会命中 html / xml；
+#      "cv" 会命中简历（CV）。凡是想搜的方向，把【全称】完整写出来，不要只写缩写。
+#
+#   4) 【更具体的词写在前面】。
+#      程序取"列表中第一个命中的词"作为命中记录，所以 "product designer" 必须排在
+#      "product design" 之前，否则记录的关键词会不准确。
+#
+# 下面是【示例】（产品/商业方向）。★请整段删掉，换成你自己的岗位名称★
+# 不确定写什么？打开 JobsDB 搜你想要的岗位，把标题里反复出现的词抄下来即可。
+keywords:
+  - "product manager"        # 示例：产品经理
+  - "project manager"        # 示例：项目经理
+  - "business analyst"       # 示例：商业分析师
+  - "marketing executive"    # 示例：市场专员
+
+# ---- 毕业生项目关键词（可选，面向"毕业前一年"的在读学生）----
+# 有些岗位（银行管培生 Management Trainee、毕业生培训计划等）在招聘网站上是
+# full-time，但【入职时间在毕业之后】。如果你还在读，这类岗位正是应该提前一年投的
+# 高价值目标，所以单独放一个列表：系统会用「全职」类型的 URL 过滤去抓它们，
+# 与上面的普通关键词（用 job_types 的实习/兼职过滤）分开，避免被当成"违法全职"误杀。
+# 不需要（已毕业 / 不想投管培生）→ 把下面的词删掉即可。
+graduate_keywords:
+  - "management trainee"
+  - "graduate trainee"
+  - "graduate programme"
+  - "graduate program"
+  - "management associate"
+
+# 关键词同义词映射（可选）：value 里的词命中后，归入 key 所代表的主关键词。
+# 用途举例：你写了 "product manager"，但有些岗位标题写的是 "product owner"，
+#          把后者填进同义词，它就会被算作命中 "product manager"。
+# 规则：主关键词必须出现在上面的 keywords 列表里，否则它的同义词不会生效。
+# 注意：同义词同样是子串匹配，所以同样只放岗位名称，不放技能名词。
+keyword_synonyms:
+  "product manager": ["product owner"]
+  "marketing executive": ["marketing associate"]
+
+location: "Hong Kong"          # 抓取目标地区
+
+# ---- 岗位类型过滤（合规红线，P0）----
+# ⚠️ 学生签证在读期间【只能】做实习/兼职，全职工作违法。
+# 系统会在抓取 URL 上做岗位类型过滤（主防线），并在 keyword_filter 里再兜一道
+# "岗位类型安全网"（命中 full-time 即剔除），从源头杜绝全职岗位进入日报。
+# 毕业后拿到 IANG 签证、确需全职时，再把 "full time" 加进本列表。
+job_types:
+  - "internship"
+  - "part time"
+
+# ---- 抓取频率与防封号（P0-2）----
+poll_interval_minutes: 30      # 轮询间隔，推荐 15-30 分钟
+human_delay:                   # 每次页面导航之间的随机延迟（秒），模拟人类操作
+  min_s: 2
+  max_s: 8
+daily_limits:                  # 每站点"每日抓取页数"上限（香港自然日），触发即停并记日志
+  jobsdb: 150
+  linkedin: 40
+  indeed: 40
+
+# ---- 关键词轮转（每轮抓几个关键词，P0-2 配套）----
+# 初筛是「逐关键词搜索」，每搜索一个关键词就吃掉 1–2 页每日配额（配额按香港自然日
+# 0 点重置，不用就作废）。所以"每轮抓几个关键词"要跟你的开机习惯匹配：
+#
+#   → 电脑 24 小时常开：用 auto。auto = 每日配额 ÷ 当日轮数，把配额摊到全天，
+#     避免开机头几小时烧光、之后一整天抓不到东西（那时全天都在空转）。
+#   → 每天只开一小会儿：用 all。反正开机时间短，开一次就尽量把关键词全扫一遍，
+#     配额不用白不用（配额按自然日 0 点重置，不用就作废）。
+#
+#   per_cycle: auto → 按每日配额 ÷ 当日轮数自动推算每轮抓几个（电脑常开时用这个）
+#   per_cycle: all  → 每轮抓全部关键词（每天只开机十几分钟时用这个）
+#   per_cycle: 5    → 每轮固定抓 5 个关键词
+#
+# per_source：按站点覆盖上面的值。LinkedIn 对自动化流量最敏感（而且每个关键词还要
+# 翻 2 页），所以即便其他站一轮全量，也可以让它小步慢走、靠跨轮轮转慢慢覆盖全部关键词。
+keyword_rotation:
+  per_cycle: auto
+  per_source:
+    # linkedin: 3     # 想让最敏感的 LinkedIn 小步慢走，就把这行取消注释
+
+# ---- 浏览器行为 ----
+browser:
+  headless: true               # 无头模式（不弹浏览器窗口）。实测有头模式翻多页会崩
+                               # 溃（Page crashed），无头模式稳定且能正常过 Cloudflare。
+  cloudflare_wait_seconds: 45  # 遇到挑战页的最长等待时间（只等待，绝不破解）
+
+# ---- LLM 打分（P0-4）----
+llm:
+  provider: "deepseek"
+  base_url: "https://api.deepseek.com"
+  model: "deepseek-chat"
+  # API key 从环境变量读取（变量名在此指定，值永不写进配置/代码/日志）
+  # PowerShell 设置示例:  $env:DEEPSEEK_API_KEY = "sk-xxxx"
+  api_key_env: "DEEPSEEK_API_KEY"
+  timeout_seconds: 20          # 单岗位打分超时（验收要求 <5 秒，留足网络余量）
+
+score_threshold: 60            # 低于此分的岗位不进日报
+realtime_threshold: 80         # ≥ 此分的新岗位不等日报、发现即推送
+show_unscored: true            # LLM 打分失败降级为"未打分"的岗位是否仍进日报
+                               # （默认 true：宁可多看，不可漏看）
+max_job_age_days: 2            # 岗位新鲜度上限：只保留最近 N 天内发布的岗位（默认 2 天）
+
+# ---- Telegram 推送（P0-6）----
+telegram:
+  bot_token: ""                # 与 @BotFather 创建的机器人 token，形如 123456:ABC-xxx
+  chat_id: ""                  # 你的会话 ID（先给机器人发一条 /start，再访问
+                               #  https://api.telegram.org/bot<TOKEN>/getUpdates 获取）
+feedback_poll_seconds: 60      # 反馈按钮轮询间隔（getUpdates）
+
+# ---- 日报 ----
+report_time: "09:00"           # 每日日报推送时间（香港时区，HH:MM）
