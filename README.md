@@ -150,6 +150,13 @@ python run.py login linkedin
 python run.py login indeed
 ```
 
+> **Windows encoding note.** The first line of `requirements.txt`
+> (`# -*- coding: utf-8 -*-`) is there on purpose. On Simplified-Chinese Windows,
+> pip would otherwise decode that file with GBK and abort with
+> `UnicodeDecodeError: 'gbk' codec can't decode byte ...`. Keep the line.
+> The bundled `.bat` files also set `PYTHONUTF8=1`, so Chinese/emoji console
+> output stays intact even when the window output is redirected to a file.
+
 **Daily use — after either option, just this:**
 
 ```powershell
@@ -305,6 +312,12 @@ python run.py login jobsdb        # 首次过盾/登录（三站各跑一次）
 python run.py login linkedin
 python run.py login indeed
 ```
+
+> **Windows 中文编码提示（别删那一行）。** `requirements.txt` 的第一行
+> `# -*- coding: utf-8 -*-` 是刻意保留的：简体中文 Windows 下 pip 默认会用 GBK
+> 解码该文件，从而崩在 `UnicodeDecodeError: 'gbk' codec can't decode byte ...`。
+> 项目里的 7 个 `.bat` 也统一设了 `PYTHONUTF8=1`，保证窗口输出被重定向到文件时
+> 中文与 emoji 不会抛 `UnicodeEncodeError`。
 
 **日常使用 —— 无论哪种方式安装，之后就这两三条命令：**
 

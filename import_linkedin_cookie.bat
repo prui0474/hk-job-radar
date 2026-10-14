@@ -1,5 +1,8 @@
 @echo off
 chcp 65001 >nul
+REM Force Python into UTF-8 mode. On Simplified-Chinese Windows the default
+REM preferred encoding is GBK (cp936), which can break file/console decoding.
+set "PYTHONUTF8=1"
 cd /d "%~dp0"
 
 set "PY="
