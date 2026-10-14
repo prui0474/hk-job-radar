@@ -123,8 +123,11 @@ llm:
   provider: "deepseek"
   base_url: "https://api.deepseek.com"
   model: "deepseek-chat"
-  # API key 从环境变量读取（变量名在此指定，值永不写进配置/代码/日志）
-  # PowerShell 设置示例:  $env:DEEPSEEK_API_KEY = "sk-xxxx"
+  # API key 的读取顺序：① 环境变量 ② 项目根目录的 api_key.txt
+  # 最省事：在本文件同级目录建一个 api_key.txt，里面只写 sk- 开头那一串即可。
+  # 也可以走环境变量（变量名在此指定，值永不写进配置/代码/日志）：
+  #   PowerShell 临时： $env:DEEPSEEK_API_KEY = "sk-xxxx"
+  #   PowerShell 永久： setx DEEPSEEK_API_KEY "sk-xxxx"（设置后要重开窗口）
   api_key_env: "DEEPSEEK_API_KEY"
   timeout_seconds: 20          # 单岗位打分超时（验收要求 <5 秒，留足网络余量）
 

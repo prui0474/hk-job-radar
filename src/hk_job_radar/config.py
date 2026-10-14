@@ -51,8 +51,20 @@ class LLMConfig:
     timeout_seconds: int = 20
 
     def resolve_api_key(self) -> str:
-        """从环境变量解析 API key。取不到返回空串，由调用方决定降级。"""
-        return os.environ.get(self.api_key_env, "").strip()
+        """解析 API key：环境变量优先，其次项目根目录的 api_key.txt。
+
+        为什么要回落读 api_key.txt：本项目面向「双击 bat 的新手」，bat 会把
+        api_key.txt 读进环境变量；但直接用 `python run.py once` 的人没有 bat
+        这一步，若不回落就会出现「明明填了 api_key.txt，却说未配置」的怪现象。
+        用 utf-8-sig 读取，可顺带吃掉记事本可能写进去的 BOM。
+        """
+        key = os.environ.get(self.api_key_env, "").strip()
+        if key:
+            return key
+        try:
+            return (PROJECT_ROOT / "api_key.txt").read_text(encoding="utf-8-sig").strip()
+        except OSError:
+            return ""
 
 
 @dataclass
@@ -309,10 +321,9 @@ def require_llm_key(cfg: AppConfig) -> None:
         raise ConfigError(
             f"未配置 {cfg.llm.api_key_env}（DeepSeek 的 key），LLM 打分无法工作。\n"
             f"\n"
-            f"  方式一 · 最省事（双击 start.bat / run_once.bat 的用户用这个）：\n"
-            f"      在项目文件夹里新建一个文本文件，命名为 api_key.txt，\n"
-            f"      打开后只写你那一串 key（sk- 开头），保存即可。\n"
-            f"      这两个 bat 启动时会自动读取它，无需其它设置。\n"
+            f"  方式一 · 最省事（推荐）：在项目文件夹里新建一个文本文件，\n"
+            f"      命名为 api_key.txt，打开后只写你那一串 key（sk- 开头），保存。\n"
+            f"      程序会自动读取它 —— 无论你是双击 bat，还是直接跑 python run.py。\n"
             f"\n"
             f"  方式二 · 临时（只在当前 PowerShell 窗口有效）：\n"
             f"      $env:{cfg.llm.api_key_env} = \"sk-你的key\"\n"
