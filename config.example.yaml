@@ -6,8 +6,8 @@
 # 配置只在进程启动时读取一次，修改后需重启生效（PRD P0-7 约定）。
 # =====================================================================
 
-# ---- 抓取站点开关（三站适配器均已交付并实测）----
-# true = 启用该站监控。三站均已跑通。
+# ---- 抓取站点开关 ----
+# true = 启用该站监控。
 # ⚠️ LinkedIn 请务必用【求职专用小号】登录一次（python run.py login linkedin），
 #    主号的人脉与推荐信资产不要暴露在自动化活动中；未登录会被节流跳登录墙。
 # ⚠️ Indeed 会拦截无头浏览器，抓取时会弹出一个可见的浏览器窗口（属正常现象），
@@ -24,6 +24,11 @@ sources:
 #      其余直接丢弃。这一层是免费的（纯字符串匹配），专门用来把噪音挡在
 #      按次计费的 AI 打分之前。
 #
+# 💡 免费版额度：关键词【最多 7 个】（普通关键词 + 下面毕业生项目关键词合计）。
+#    写了更多也不会报错，程序会按顺序只用前 7 个，并在日志里提醒你。
+#    7 个通常够用——按"一个方向一个词"来选即可（如 data analyst / data scientist /
+#    business analyst / data engineer / machine learning / quant / management trainee）。
+#
 # 怎么填 —— 四条规则，照着做就不会踩坑：
 #
 #   1) 写「岗位名称」，英文小写，一行一个。
@@ -38,10 +43,10 @@ sources:
 #      "cv" 会命中简历（CV）。凡是想搜的方向，把【全称】完整写出来，不要只写缩写。
 #
 #   4) 【更具体的词写在前面】。
-#      程序取"列表中第一个命中的词"作为命中记录，所以 "product designer" 必须排在
-#      "product design" 之前，否则记录的关键词会不准确。
+#      程序取"列表中第一个命中的词"作为命中记录，所以 "data scientist" 必须排在
+#      "data science" 之前，否则记录的关键词会不准确。
 #
-# 下面是【示例】（产品/商业方向）。★请整段删掉，换成你自己的岗位名称★
+# 下面是【示例】。★请整段删掉，换成你自己的岗位名称★
 # 不确定写什么？打开 JobsDB 搜你想要的岗位，把标题里反复出现的词抄下来即可。
 keywords:
   - "product manager"        # 示例：产品经理
@@ -71,16 +76,29 @@ keyword_synonyms:
   "product manager": ["product owner"]
   "marketing executive": ["marketing associate"]
 
+# ---- 求职阶段（决定抓哪些岗位类型，★必填★）----
+#   student  → 在读学生：只抓「实习 / 兼职」
+#              （学生签证在读期间做全职是违法的，这是合规底线）
+#   graduate → 已毕业 / 持 IANG：只抓「全职」（含管培生、毕业生培训计划）
+#   both     → 毕业前后过渡期：实习、兼职、全职全都要
+#
+# 选错的影响：student 会漏掉所有全职岗；graduate 会漏掉所有实习岗。
+# 不确定就先用 both，等看清哪类岗位更值得投，再收窄。
+career_stage: student
+
 location: "Hong Kong"          # 抓取目标地区
 
-# ---- 岗位类型过滤（合规红线，P0）----
-# ⚠️ 学生签证在读期间【只能】做实习/兼职，全职工作违法。
-# 系统会在抓取 URL 上做岗位类型过滤（主防线），并在 keyword_filter 里再兜一道
-# "岗位类型安全网"（命中 full-time 即剔除），从源头杜绝全职岗位进入日报。
-# 毕业后拿到 IANG 签证、确需全职时，再把 "full time" 加进本列表。
-job_types:
-  - "internship"
-  - "part time"
+# ---- 岗位类型过滤（高级覆盖项，通常不用动）----
+# ⚠️ 上面有了 career_stage 之后，这里【一般不需要写】：
+#    程序会按 career_stage 自动推导 job_types。
+#    只有当你想做 career_stage 覆盖不到的精细控制时，才手写这个列表
+#    （例如 student 但想同时看全职）。一旦写了，就以你写的为准。
+#
+# 所有岗位在进入日报前还会过一道「岗位类型安全网」：不符合的类型直接剔除，
+# 因此永远不会出现"URL 过滤没生效、混进违法全职岗"的情况。
+# job_types:
+#   - "internship"
+#   - "part time"
 
 # ---- 抓取频率与防封号（P0-2）----
 poll_interval_minutes: 30      # 轮询间隔，推荐 15-30 分钟
@@ -133,16 +151,64 @@ llm:
 
 score_threshold: 60            # 低于此分的岗位不进日报
 realtime_threshold: 80         # ≥ 此分的新岗位不等日报、发现即推送
+                               # （免费版不含"实时秒推"，这些岗位会并入每日日报，不会丢）
 show_unscored: true            # LLM 打分失败降级为"未打分"的岗位是否仍进日报
                                # （默认 true：宁可多看，不可漏看）
 max_job_age_days: 2            # 岗位新鲜度上限：只保留最近 N 天内发布的岗位（默认 2 天）
 
-# ---- Telegram 推送（P0-6）----
-telegram:
-  bot_token: ""                # 与 @BotFather 创建的机器人 token，形如 123456:ABC-xxx
-  chat_id: ""                  # 你的会话 ID（先给机器人发一条 /start，再访问
-                               #  https://api.telegram.org/bot<TOKEN>/getUpdates 获取）
-feedback_poll_seconds: 60      # 反馈按钮轮询间隔（getUpdates）
+# =============================================================================
+#  推送设置（★必须配好一个通道，否则收不到任何消息★）
+# =============================================================================
+# 四个通道【完全平等】，任选其一填在 channels 里即可。没有"默认通道"。
+#
+# 💡 免费版额度：只能启用【1 个】通道。写了多个不会报错——程序只用你写在
+#    channels 列表里的第一个，其余忽略并提醒。想换通道就把想用的那个写到第一位。
+#
+# 怎么选（都是免费的）：
+#   wecom    企业微信群机器人 —— 腾讯官方、免费、无条数上限、消息进微信。内地可用。
+#            步骤：手机装「企业微信」→ 注册（企业名称随便填）→ 建一个只有自己的群
+#                  → 群设置 → 群机器人 → 添加 → 复制 Webhook 地址，填到下面。
+#            可选：在企业微信里「我 → 设置 → 微信绑定」，之后个人微信也能收。
+#   email    邮件 —— 最通用，能发排好版的 HTML 岗位卡片，不需要任何第三方平台。
+#            注意：auth_code 是邮箱后台生成的【授权码】，不是你的登录密码！
+#            QQ 邮箱：设置 → 账户 → 开启 SMTP 服务 → 生成授权码。
+#   telegram Telegram —— 需要能访问 Telegram 的网络环境（内地需自备网络条件）。
+#            它与其它三个通道地位完全相同，不是特殊通道。
+#            步骤：与 @BotFather 对话创建机器人拿 token；给机器人发一条 /start，
+#                  再访问 https://api.telegram.org/bot<TOKEN>/getUpdates 取 chat_id。
+#   wxpusher WxPusher —— 扫码即用，但属第三方服务、有免费额度上限。
+#            步骤：打开 wxpusher.zjiecode.com → 微信扫码登录 → 创建应用拿 appToken
+#                  → 「用户管理」里复制你的 UID。
+#
+# 只填你启用的那一个通道，其余整段保持默认即可。
+notify:
+  channels:
+    - "wecom"                  # ← 改成你要用的通道：wecom / email / telegram / wxpusher
+
+  wecom:
+    webhook: ""                # 形如 https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxxx
+
+  email:
+    smtp_host: "smtp.qq.com"   # QQ 邮箱用这个；163 是 smtp.163.com；Gmail 是 smtp.gmail.com
+    smtp_port: 465             # 465 = SSL；587 = STARTTLS（都能自动识别，按邮箱说明填）
+    user: ""                   # 你的完整邮箱地址，如 you@qq.com
+    auth_code: ""              # ★ 邮箱授权码，不是登录密码
+    to: ""                     # 收件邮箱，可与 user 相同；多个用逗号分隔
+    use_ssl: true
+
+  telegram:
+    bot_token: ""              # 与 @BotFather 创建的机器人 token，形如 123456:ABC-xxx
+    chat_id: ""
+
+  wxpusher:
+    app_token: ""              # 形如 AT_xxxxxx
+    uids: []                   # 你的 UID 列表，如 ["UID_xxxxxx"]
+
+feedback_poll_seconds: 60      # 反馈按钮轮询间隔（仅 Telegram 支持点击反馈，其它通道会自动跳过）
 
 # ---- 日报 ----
 report_time: "09:00"           # 每日日报推送时间（香港时区，HH:MM）
+                               # 免费版每天只推 1 次；手动补发随时可做（report_now）。
+# report_times:                # 高级版：一天多个时间点（免费版会忽略这一段）
+#   - "09:00"
+#   - "18:30"

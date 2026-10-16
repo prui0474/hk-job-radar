@@ -13,6 +13,7 @@ from datetime import datetime
 from apscheduler.schedulers.blocking import BlockingScheduler
 from loguru import logger
 
+from hk_job_radar import tier
 from hk_job_radar.config import AppConfig
 from hk_job_radar.models import HK_TZ
 from hk_job_radar.pipeline import Pipeline
@@ -45,15 +46,17 @@ class Scheduler:
         self.pipeline = pipeline
 
     def start(self) -> None:
-        """装配三个任务并阻塞启动。Ctrl+C 可安全退出。"""
+        """装配定时任务并阻塞启动。Ctrl+C 可安全退出。"""
         sched = BlockingScheduler(timezone=HK_TZ, job_defaults=_JOB_DEFAULTS)
         self.setup_monitoring_job(sched)
         self.setup_report_job(sched)
         self.setup_feedback_job(sched)
 
+        times = "、".join(tier.effective_report_times(self.config))
+        channels = "、".join(self.pipeline.notifier.labels) or "（未配置）"
         logger.info(
             f"调度器启动：监控每 {self.config.poll_interval_minutes} 分钟 · "
-            f"日报 {self.config.report_time} · "
+            f"日报 {times} · 推送通道 {channels} · "
             f"反馈轮询每 {self.config.feedback_poll_seconds}s。Ctrl+C 退出。")
         try:
             sched.start()
@@ -73,17 +76,30 @@ class Scheduler:
         )
 
     def setup_report_job(self, sched: BlockingScheduler) -> None:
-        """每日日报任务（香港时间 cron，默认 09:00）。"""
-        hour, minute = (int(x) for x in self.config.report_time.split(":"))
-        sched.add_job(
-            _safe(self.pipeline.run_daily_report, "daily_report"),
-            trigger="cron",
-            hour=hour, minute=minute,
-            id="daily_report",
-        )
+        """每日日报任务（香港时间 cron）。
+
+        免费版只有 report_time 一个时间点（天然就是「每天 1 次」）；高级版可以
+        配 report_times 挂多个时间点。具体取几个由 tier.effective_report_times 决定，
+        这里不写死数字——分层规则只在一个地方定义。
+        """
+        for idx, time_str in enumerate(tier.effective_report_times(self.config)):
+            hour, minute = (int(x) for x in time_str.split(":"))
+            sched.add_job(
+                _safe(self.pipeline.run_daily_report, f"daily_report_{time_str}"),
+                trigger="cron",
+                hour=hour, minute=minute,
+                id=f"daily_report_{idx}",
+            )
 
     def setup_feedback_job(self, sched: BlockingScheduler) -> None:
-        """Telegram 反馈轮询任务（U2：getUpdates + offset 持久化）。"""
+        """反馈按钮轮询任务（U2：getUpdates + offset 持久化）。
+
+        只有支持交互的通道才需要它（目前仅 Telegram）。用邮件/企微时启动这个
+        任务纯属白跑——每小时几十次无用的网络请求，没必要。
+        """
+        if not self.pipeline.notifier.has_feedback_channel:
+            logger.info("当前推送通道不支持点击反馈，跳过反馈轮询任务。")
+            return
         sched.add_job(
             _safe(self.pipeline.poll_feedback_once, "feedback_poll"),
             trigger="interval",

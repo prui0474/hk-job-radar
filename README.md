@@ -1,11 +1,11 @@
 # HK Job Radar · 香港岗位雷达
 
 > **Your personal, AI-assisted job search automation for Hong Kong.**
-> Watch new jobs across three boards → filter → score → daily Telegram digest → semi-auto apply.
+> Watch new jobs across three boards → filter → score → daily push (WeCom / Email / Telegram / WxPusher) → semi-auto apply.
 > Local-first, privacy-first, compliance-first.
 >
 > **一个本地运行、AI 辅助的香港求职自动化工具。**
-> 自动监控三大招聘网站的新岗位 → 关键词初筛 → 大模型打分 → 每日 Telegram 日报 → 半自动填表。
+> 自动监控三大招聘网站的新岗位 → 关键词初筛 → 大模型打分 → 每日推送（企业微信 / 邮件 / Telegram / WxPusher）→ 半自动填表。
 > 数据不出本机，合规克制，配置驱动。
 
 <p align="center">
@@ -33,7 +33,8 @@
 HK Job Radar is a **self-hosted job search assistant** for the Hong Kong market. It
 periodically watches **JobsDB / LinkedIn / Indeed** for new postings, filters them by
 your keywords, scores each one with an **LLM against your personal profile**, and
-delivers a **daily Telegram digest** with ✅/❌ feedback buttons. It also ships a
+delivers a **daily digest to whichever channel you pick** — WeCom group bot, WxPusher,
+email (HTML job cards), or Telegram (with ✅/❌ buttons). It also ships a
 **semi-automatic application assistant** that fills in forms for you — the final
 "Submit" is always yours to click.
 
@@ -43,8 +44,10 @@ automates the repetitive part of job hunting: *finding and shortlisting*.
 ### Who it's for
 
 - **Anyone job-hunting in Hong Kong** — students, fresh graduates, career switchers.
-- **Especially non-local students on a Hong Kong student visa** — it ships with
-  visa-compliance filtering (see [Compliance](#compliance--safety)).
+  Set `career_stage: student / graduate / both` and the employment-type filter follows.
+- **Especially non-local students on a Hong Kong student visa** — `career_stage: student`
+  ships as the default and applies visa-compliance filtering
+  (see [Compliance](#compliance--safety)).
 - **Works for any role** — just list your own target job titles in `config.yaml`
   (the template ships with neutral product / business examples).
 
@@ -88,25 +91,29 @@ flowchart LR
 
 - 🔎 **3-source monitoring** — JobsDB, LinkedIn, Indeed (each toggleable).
 - 🧠 **LLM scoring** — DeepSeek (OpenAI-compatible; swap `base_url` for others).
-- 📬 **Telegram delivery** — daily digest + real-time high-score push + feedback buttons.
+- 📬 **4 push channels, all equal** — WeCom group bot / WxPusher / Email (HTML job
+  cards) / Telegram. Pick any one in `config.yaml`; no channel is second-class.
 - ✍️ **Semi-auto apply** — never auto-submits; final click is always human.
 - 🛡️ **Anti-ban** — random delays, daily page caps, exponential backoff, no CAPTCHA
   cracking, no Cloudflare bypass.
-- 🧩 **Config-driven** — keywords, location, job types, profile, thresholds all in YAML.
-- 🎓 **Visa-compliance filter** — internship/part-time by default; post-graduation
-  management-trainee roles tracked separately.
+- 🧩 **Config-driven** — keywords, location, career stage, profile, thresholds all in YAML.
+- 🎓 **Career-stage aware** — `career_stage: student / graduate / both` sets the
+  employment types automatically (student visa → internship/part-time only).
+- 🔓 **Genuinely usable for free** — no account, no server, no phone-home; the paid
+  tier only adds convenience and depth (see *Free vs Pro* below).
 
 ### Limitations
 
 - **Some technical comfort helps** — though the one-click installer (`install.bat`
   on Windows, `install.command` on macOS) removes most of it; you still need a
-  DeepSeek key and a Telegram bot.
+  DeepSeek key and one configured push channel.
 - **Depends on third-party sites** — scraping may be rate-limited or blocked at any
   time; LinkedIn & Indeed need a login / Cloudflare pass-through.
 - **Not 100% coverage** — it's a radar, not a guarantee of every posting.
 - **LLM score is an estimate** — a relevance signal, never a hiring decision.
-- **Telegram is currently the only channel** — it is not reachable from mainland
-  China without a VPN. WeChat / email channels are planned.
+- **The free tier is capped** — 7 keywords, 1 push channel, 1 digest per day, no
+  instant push. These caps live in readable code and are a product contract, not DRM;
+  the Pro feature set is simply not in this repository.
 
 ### Quick start
 
@@ -115,14 +122,16 @@ flowchart LR
 1. Install [Python](https://www.python.org/downloads/) — tick **"Add python.exe to PATH"**.
 2. On this page click **Code → Download ZIP**, then unzip it.
 3. Double-click **`install.bat`** — it sets everything up and asks for your DeepSeek key.
-4. Open `config.yaml` in Notepad → fill `bot_token` & `chat_id`, **and replace
-   `keywords` with your own target roles** (the template ships with neutral examples).
+4. Open `config.yaml` in Notepad → set `notify.channels` to the one channel you want
+   (`wecom` / `wxpusher` / `email` / `telegram`) and fill in that channel's block,
+   set `career_stage` (`student` / `graduate` / `both`), **and replace `keywords`
+   with your own target roles** (the template ships with neutral examples).
 5. Open `data/profiles/profile.yaml` in Notepad → fill in **your own background**
    (this is what the LLM scores jobs against — don't skip it).
 6. Double-click **`login_jobsdb.bat`** once (Cloudflare pass-through).
 7. Double-click **`start.bat`** (keep it running) — or **`run_once.bat`** for a
-   single sweep. Either way you get a Telegram digest the first time you run it
-   that day, and new high-scoring jobs are pushed as they appear.
+   single sweep. Either way you get a digest the first time you run it that day,
+   and new high-scoring jobs are pushed as they appear.
 
 > Steps 4–5 are the two things the installer **cannot** do for you: describing *what
 > you're looking for* and *who you are*. Skip them and the tool still runs, but it
@@ -171,7 +180,7 @@ Copy-Item data/profiles/profile.example.yaml data/profiles/profile.yaml
 # 4. LLM key — either an env var, or a one-line api_key.txt next to config.yaml
 $env:DEEPSEEK_API_KEY = "sk-..."      # env var (or: create api_key.txt containing just sk-...)
 
-# 5. Edit config.yaml → fill telegram.bot_token & telegram.chat_id
+# 5. Edit config.yaml → set notify.channels + that channel's block (see config.example.yaml)
 
 # 6. One-time login (Cloudflare / LinkedIn)
 python run.py login jobsdb
@@ -207,15 +216,18 @@ Everything is in `config.yaml` (see `config.example.yaml` for commented defaults
 
 | Key | What it does |
 | --- | --- |
-| `keywords` | your target job titles (e.g. product manager, business analyst, …) |
+| `sources` | which boards to enable |
+| `keywords` | your target job titles (up to 7 on the free tier) |
 | `graduate_keywords` | post-graduation full-time roles (management trainee, …) |
+| `career_stage` | `student` = internship/part-time · `graduate` = full-time · `both` |
+| `job_types` | advanced override; normally derived from `career_stage` |
+| `notify.channels` | which push channel(s) to enable — all four are equal |
+| `notify.wecom` / `wxpusher` / `email` / `telegram` | credentials for each channel |
 | `keyword_rotation` | how many keywords to search per cycle (tune to your uptime) |
 | `daily_limits` | per-site page cap per Hong Kong calendar day |
-| `job_types` | allowed employment types (internship / part time by default) |
 | `location` | target region |
-| `sources` | which boards to enable |
-| `telegram` | bot token + chat id |
 | `score_threshold` / `realtime_threshold` | 60 = daily, 80 = instant push |
+| `report_time` | daily digest time (HK) |
 
 The `background` section of `data/profiles/profile.yaml` drives LLM scoring — **you must
 replace the placeholders with your own** skills, experience, and target roles. If that
@@ -234,8 +246,37 @@ description and scores become far less meaningful.
   you, never solved.
 - **Secrets never committed** — API keys come from env vars; real config and profile
   are gitignored; only templates are public.
-- **Student-visa aware** — defaults to internship/part-time; add `full time` to
-  `job_types` only after you hold IANG.
+- **Student-visa aware** — `career_stage: student` (the default) keeps
+  internship/part-time only; switch to `graduate` / `both` only after you hold IANG.
+
+### Free vs Pro
+
+Everything needed to actually run a job radar is in this repository — nothing is
+crippled, nothing phones home, no account required.
+
+| | Free (this repo) | Pro (closed-source pack, separate download) |
+| --- | --- | --- |
+| Job boards | all of them | all of them |
+| Keywords | up to **7** | unlimited |
+| Push channels | **1** — WeCom / WxPusher / Email / Telegram, your pick | all at once |
+| Daily digest | **1 per day** (scheduled or manual) | custom schedule, several per day |
+| Instant push for ≥80 | — | yes |
+| Profiles (search directions) | 1 | several in parallel |
+| Setup wizard & self-check | included | included |
+| Graphical job workspace | — | yes |
+| Trend dashboard · application tracker | — | yes |
+| Resume-vs-JD gap analysis · interview prep | — | yes |
+| Polished HTML report · Excel / PDF export | — | yes |
+
+**Why the caps exist:** they only apply to things whose marginal cost grows with use
+(LLM spend, scraping quota, and human support time). The free build is a complete,
+genuinely useful radar — seven well-chosen keywords cover most Hong Kong
+data / quant / BA searches, and one channel is enough to receive results.
+
+**A note on honesty:** these caps live in readable code in this repository, because
+MIT means you own the code. They are a product contract, not DRM. The Pro feature set
+is kept **out of this repository entirely** — that is the only lock that actually
+works. Build your own if you like; the free tier is not a demo.
 
 ### Project structure
 
@@ -254,7 +295,8 @@ hk_job_radar/
 │   ├── scrapers/                  # jobsdb / linkedin / indeed adapters
 │   ├── scoring/                   # keyword filter + LLM scorer
 │   ├── copilot/                   # semi-auto apply (form filler + QA)
-│   ├── notify/                    # Telegram report + client
+│   ├── notify/                    # 4 push channels: base / dispatch / wecom / wxpusher / email / telegram
+│   ├── tier.py                    # free-tier caps in one place (see Free vs Pro)
 │   ├── pipeline.py / scheduler.py
 │   └── config.py / db.py / models.py
 ├── docs/                          # beginner guides (Windows + macOS)
@@ -278,7 +320,8 @@ hk_job_radar/
 
 香港岗位雷达是一个**本地运行的求职助手**：定时监控 **JobsDB / LinkedIn / Indeed**
 三大网站的新岗位，按你的关键词初筛，用**大模型（DeepSeek）对照你的个人画像打分**，
-每天推送一条 **Telegram 日报**（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾**，
+每天推送到**你自选的一个通道**——企业微信群机器人 / WxPusher / 邮件（HTML 岗位卡片）/
+Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾**，
 帮你填申请表——但**最后的「提交」永远由你亲手点击**。
 
 它**不是**求职网站、**不是**猎头、**不是**代写简历，它只自动处理求职里最重复的
@@ -286,8 +329,9 @@ hk_job_radar/
 
 ### 适合谁
 
-- **任何在香港求职的人**——学生、应届生、转行者都能用；
-- **尤其适合持学生签证的港硕/非本地学生**（内置签证合规过滤，见下）；
+- **任何在香港求职的人**——学生、应届生、转行者都能用；用 `career_stage` 选身份，
+  岗位类型过滤会自动跟着变；
+- **尤其适合持学生签证的港硕/非本地学生**（默认 `career_stage: student`，内置签证合规过滤，见下）；
 - 岗位方向**完全由你自己在 `config.yaml` 里定义**（模板自带中性的产品 / 商业示例），改配置即可覆盖任意岗位。
 
 ### 解决什么痛点
@@ -303,20 +347,25 @@ hk_job_radar/
 
 - 🔎 三站监控，各自可开关
 - 🧠 LLM 打分（DeepSeek，OpenAI 兼容，可换其他服务）
-- 📬 Telegram 日报 + 高分即时推送 + 反馈按钮
+- 📬 **四个推送通道完全平等**——企业微信 / WxPusher / 邮件（HTML 卡片）/ Telegram，
+  在 `config.yaml` 里选一个即可，没有谁是"二等公民"
 - ✍️ 半自动投递，绝不自动提交
 - 🛡️ 防封号：随机延迟、每日页数上限、指数退避，不破解验证码
 - 🧩 配置驱动，可复用到任何求职目标
-- 🎓 签证合规过滤（默认实习/兼职，管培生单独处理）
+- 🎓 按求职阶段自动过滤岗位类型（`career_stage`：学生 / 已毕业 / 两者）
+- 🔓 **免费版就是完整可用的**——不需要账号、不需要服务器、不上传任何数据；
+  付费版只增加「省事」与「深度」（见下「免费版与高级版」）
 
 ### 局限
 
-- 有一定技术门槛——不过「一键安装脚本」已省去大部分；仍需自备 DeepSeek key 和 Telegram 机器人
+- 有一定技术门槛——不过「一键安装脚本」已省去大部分；仍需自备 DeepSeek key 和配好一个推送通道
   （Windows 双击 `install.bat`，macOS 双击 `install.command`，流程一样）
 - 依赖第三方站点，抓取可能被限流或临时封锁（LinkedIn/Indeed 需登录过盾）
 - 不保证 100% 覆盖——它是「雷达」，不是「全量抓取」
 - LLM 打分是相关度参考，不是录用决定
-- 目前推送渠道只有 Telegram（**内地网络无法直接访问**）；微信 / 邮件推送在规划中
+- **免费版有额度上限**——7 个关键词、1 个推送通道、每天 1 次日报、不含实时秒推。
+  这些限制写在可读的代码里（`src/hk_job_radar/tier.py`），是产品约定而非加密锁；
+  高级版的功能则**完全不在这份仓库里**。
 
 ### 快速上手
 
@@ -325,13 +374,15 @@ hk_job_radar/
 1. 安装 [Python](https://www.python.org/downloads/)——务必勾选 **"Add python.exe to PATH"**
 2. 在本页面点 **Code → Download ZIP**，下载后解压
 3. 双击 **`install.bat`**——自动装好一切，还会引导你填 DeepSeek key
-4. 用记事本打开 `config.yaml` → 填 `bot_token` 和 `chat_id` 两行，
-   **并把 `keywords` 换成你自己要找的岗位**（模板自带的是中性示例词）
+4. 用记事本打开 `config.yaml` → 在 `notify.channels` 里写你要用的通道
+   （`wecom` / `wxpusher` / `email` / `telegram` 任选一个，四者完全平等）并填好它
+   下面的那几行；设好 `career_stage`（`student` / `graduate` / `both`）；
+   **再把 `keywords` 换成你自己要找的岗位**（模板自带的是中性示例词）
 5. 用记事本打开 `data/profiles/profile.yaml` → 填**你自己的真实背景**
    （这是 AI 打分所依据的画像，别跳过）
 6. 双击一次 **`login_jobsdb.bat`**（过一次防护验证）
 7. 双击 **`start.bat`**（保持窗口开着）；只想跑一轮就双击 **`run_once.bat`**。
-   当天第一次运行就会收到一份 Telegram 日报，之后新出现的达标岗位会实时推送。
+   当天第一次运行就会收到一份日报，之后新出现的达标岗位会推送。
 
 > 第 4、5 步是安装脚本**唯一帮不了你**的两件事：**你想找什么**、**你是谁**。
 > 跳过它们，程序照样会跑，但会抓错岗位、再拿一份空画像去打分。
@@ -371,7 +422,7 @@ playwright install chromium
 Copy-Item config.example.yaml config.yaml
 Copy-Item data/profiles/profile.example.yaml data/profiles/profile.yaml
 $env:DEEPSEEK_API_KEY = "sk-..."   # 填自己的 key
-# 编辑 config.yaml 填 telegram.bot_token 和 chat_id
+# 编辑 config.yaml：设 notify.channels（wecom / wxpusher / email / telegram 任选其一）并填好凭据
 
 python run.py login jobsdb        # 首次过盾/登录（三站各跑一次）
 python run.py login linkedin
@@ -403,7 +454,36 @@ python run.py apply <job_uid>     # 投递副驾（半自动填表）
 - **不自动提交投递**——代码里没有任何自动提交路径，最后一下永远由你点；
 - **不破解验证码、不绕过 Cloudflare**；
 - **密钥不入库**——API key 走环境变量，真实配置与画像已被 gitignore；
-- **学生签友好**——默认只抓实习/兼职，拿到 IANG 后再把 `full time` 加进 `job_types`。
+- **按求职阶段过滤**——默认 `career_stage: student` 只抓实习/兼职（学生签证合规）；
+  拿到 IANG 后改成 `graduate` 或 `both` 即可。
+
+### 免费版与高级版
+
+跑起一个真正能用的岗位雷达所需的全部代码都在这份仓库里——没有任何功能被"阉割"，
+不需要账号，不上传任何数据。
+
+| | 免费版（本仓库） | 高级版（闭源包，单独分发） |
+| --- | --- | --- |
+| 招聘网站 | 全部 | 全部 |
+| 关键词 | 最多 **7 个** | 不限 |
+| 推送通道 | **1 个**——企业微信 / WxPusher / 邮件 / Telegram 任选 | 全部同时开启 |
+| 每日日报 | **每天 1 次**（定时或手动） | 自定义频率，一天多次 |
+| ≥80 分实时秒推 | — | ✅ |
+| 个人画像 | 1 份 | 多份（多方向并行） |
+| 配置向导 · 一键自检 | ✅ 免费 | ✅ |
+| 图形岗位工作台 | — | ✅ |
+| 趋势看板 · 投递管理 | — | ✅ |
+| 简历-JD 差距分析 · 面试预测 | — | ✅ |
+| 精美 HTML 报告 · 导出 Excel/PDF | — | ✅ |
+
+**为什么要有额度上限：** 上限只加在"用一次就多一份成本"的地方（AI 调用费、抓取配额、
+以及作者的人工答疑时间）。免费版本身是完整的、真的好用的雷达——7 个选得准的关键词
+足以覆盖香港大多数数据 / 量化 / 商业分析方向的搜索，一个通道也足够收到结果。
+
+**一句实话：** 本仓库是 MIT 协议，所以免费版的额度限制就写在可读的代码里
+（`src/hk_job_radar/tier.py`）——**它是产品约定，不是加密锁**。真正有效的那道锁是：
+**高级版的功能源码根本不在这份仓库里**。想自己动手改，欢迎；不想折腾，高级版就是
+用来省掉这些事的。
 
 ### License
 

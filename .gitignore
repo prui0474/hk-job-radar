@@ -22,6 +22,10 @@ config.yaml.bak*
 # 任何形式的密钥/凭证文件（API key、token、session）——绝不入库
 api_key.txt
 *.key
+# premium.key 是「本机解锁完整功能」的凭证（* .key 已覆盖）。
+# 但它本身就被设计成放在 ~/.hk_job_radar/ 下、而不是项目目录里 ——
+# 因为项目目录会被整个打包成 ZIP 分发，key 放这里容易被误发出去。
+premium.key
 *.token
 *_token*
 *.secret

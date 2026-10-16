@@ -15,6 +15,7 @@ getUpdates），约 150 行代码完全透明可控；引入 async 框架反而�
 """
 from __future__ import annotations
 
+import re
 import time
 from typing import Callable, Optional
 
@@ -23,6 +24,7 @@ from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 from hk_job_radar.db import Database
+from hk_job_radar.notify.base import NotifyChannel
 
 _API_BASE = "https://api.telegram.org/bot{token}/{method}"
 # Telegram 单消息硬上限 4096 字符（含按钮 JSON），留少量余量
@@ -31,13 +33,47 @@ _MSG_CHAR_LIMIT = 4000
 _OFFSET_KEY = "tg_update_offset"
 
 
-class TelegramClient:
-    """Bot API 薄封装：发送、分页发送、反馈轮询。"""
+class TelegramClient(NotifyChannel):
+    """Bot API 薄封装：发送、分页发送、反馈轮询。
+
+    它是四个推送通道里**唯一支持交互按钮**的（✅/❌ 反馈闭环），
+    所以 supports_keyboard / supports_feedback 为 True——调度器据此决定
+    要不要启动反馈轮询任务（其它通道启动也没用，只会白跑）。
+    """
+
+    name = "telegram"
+    label = "Telegram"
+    render_mode = "text"
+    supports_keyboard = True
+    supports_feedback = True
+    max_chars = _MSG_CHAR_LIMIT
 
     def __init__(self, bot_token: str, chat_id: str, db: Optional[Database] = None) -> None:
         self.bot_token = bot_token
         self.chat_id = chat_id
         self.db = db   # 用于 offset 持久化；传 None 则 offset 只存活于本进程
+
+    # ------------------------------------------------------------------
+    # 通道接口适配（其余通道共用同一组方法名，流水线不关心具体实现）
+    # ------------------------------------------------------------------
+    def is_configured(self) -> bool:
+        return bool(self.bot_token) and bool(self.chat_id)
+
+    def check(self) -> tuple[bool, str]:
+        if not self.bot_token or not self.chat_id:
+            return False, "未填写 notify.telegram.bot_token / chat_id"
+        # token 形如 123456789:ABCdef...；格式不对时不如提前说清楚
+        if not re.fullmatch(r"\d+:[\w-]+", self.bot_token):
+            return False, "bot_token 格式不像合法 token（应形如 123456789:ABCdef...）"
+        return True, "已配置"
+
+    def send_text(self, text: str, keyboard: list | None = None) -> bool:
+        return self.send_message(text, keyboard)
+
+    def send_pages(self, pages: list[str],
+                   keyboards: Optional[list[list[list[dict]]]] = None) -> bool:
+        return self.send_report_pages(pages, keyboards)
+
 
     # ------------------------------------------------------------------
     # 底层调用
@@ -78,15 +114,18 @@ class TelegramClient:
             logger.error(f"Telegram 发送失败（已重试 3 次，本轮放弃）：{exc}")
 
     def send_report_pages(self, pages: list[str],
-                          keyboards: Optional[list[list[list[dict]]]] = None) -> None:
-        """逐页发送日报，页间 sleep 1s 防限流。"""
+                          keyboards: Optional[list[list[list[dict]]]] = None) -> bool:
+        """逐页发送日报，页间 sleep 1s 防限流。返回是否全部发成功。"""
+        ok = True
         for i, page in enumerate(pages):
             kb = keyboards[i] if keyboards and i < len(keyboards) else None
             try:
                 self._send_message_once(page, kb)
             except Exception as exc:
                 logger.error(f"日报第 {i + 1}/{len(pages)} 页发送失败：{exc}")
+                ok = False
             time.sleep(1)   # Telegram 对高频 sendMessage 限流约 1 条/秒/会话
+        return ok
 
     # ------------------------------------------------------------------
     # 反馈闭环（U2：P0 即带 ✅/❌ 按钮 + getUpdates 轮询）

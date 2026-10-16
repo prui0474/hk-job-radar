@@ -20,7 +20,7 @@ if not defined PY (
 echo Running ONE sweep now.
 echo A browser may open for JobsDB / LinkedIn / Indeed.
 echo Pages are fetched with a 2-8s random delay, so please be patient.
-echo The digest is pushed to Telegram at the end, then this window exits.
+echo The digest is pushed to your chosen channel at the end, then this window exits.
 echo.
 
 "%PY%" run.py once

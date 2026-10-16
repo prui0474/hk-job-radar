@@ -18,15 +18,11 @@ from typing import Any
 import yaml
 from loguru import logger
 
+from hk_job_radar import tier
 from hk_job_radar.config import AppConfig, PROFILE_PATH
 from hk_job_radar.db import Database
 from hk_job_radar.models import HK_TZ, JobPosting, now_hk
-from hk_job_radar.notify.report import (
-    build_daily_report,
-    build_feedback_keyboard,
-    build_realtime_card,
-)
-from hk_job_radar.notify.telegram_client import TelegramClient
+from hk_job_radar.notify.dispatch import Notifier
 from hk_job_radar.scoring.keyword_filter import KeywordFilter
 from hk_job_radar.scoring.llm_scorer import LLMScorer
 from hk_job_radar.scrapers import get_scraper
@@ -58,9 +54,9 @@ class Pipeline:
         self.config = config
         self.db = db
         self.keyword_filter = KeywordFilter(config)
-        # LLM 与 Telegram 延迟创建：创建依赖外部凭据，等真正用到再报错/降级
+        self.notifier = Notifier.from_config(config, db)
+        # LLM 延迟创建：创建依赖外部凭据，等真正用到再报错/降级
         self._llm: LLMScorer | None = None
-        self._tg: TelegramClient | None = None
 
     # ------------------------------------------------------------------
     # 懒加载组件
@@ -70,13 +66,6 @@ class Pipeline:
         if self._llm is None:
             self._llm = LLMScorer(self.config.llm, load_user_profile_prompt())
         return self._llm
-
-    @property
-    def telegram(self) -> TelegramClient:
-        if self._tg is None:
-            self._tg = TelegramClient(
-                self.config.telegram.bot_token, self.config.telegram.chat_id, db=self.db)
-        return self._tg
 
     # ------------------------------------------------------------------
     # 主链路：监控周期
@@ -114,6 +103,10 @@ class Pipeline:
                 summary["sources"][source] = self._run_single_source(source, browser, cutoff)
         finally:
             browser.close()   # 每轮周期结束必关浏览器，防进程泄漏
+        # 汇总各站点的即时推送数（此前这个值一直是 0，`once` 打印的实时推送数
+        # 因此恒为 0——顺手修掉，让统计口径与真实行为一致）
+        summary["pushed_realtime"] = sum(
+            int(stat.get("realtime_pushed", 0)) for stat in summary["sources"].values())
         if not backfill_done:
             # 无论本轮抓到多少岗位，都算回填完成——避免抓取失败导致永远停留在
             # 回填模式（那样每天都会重复刷 7 天旧岗位、重复花 LLM 的钱）。
@@ -258,10 +251,17 @@ class Pipeline:
     # 高分即时推送
     # ------------------------------------------------------------------
     def check_high_score_push(self, job: JobPosting) -> None:
-        """高分岗位即时推送并标记已报（防止日报再推一遍）。"""
+        """高分岗位即时推送并标记已报（防止日报再推一遍）。
+
+        ⚠️ 这是【高级版功能】：免费版不含实时秒推（tier.realtime_push_enabled()
+        为 False 时直接返回）。功能并未缺失——这些岗位照样会出现在每日日报里，
+        只是晚一点到，这正是「免费版能用、高级版更省事」的分层点之一。
+        """
+        if not tier.realtime_push_enabled():
+            logger.debug(f"免费版不含实时秒推，{job.job_uid} 并入日报：{job.llm_score} 分")
+            return
         logger.info(f"高分岗位即时推送：{job.job_uid}（{job.llm_score} 分）")
-        self.telegram.send_message(build_realtime_card(job),
-                                   keyboard=build_feedback_keyboard(job))
+        self.notifier.send_realtime(job)
         self.db.mark_reported([job.job_uid])
 
     # ------------------------------------------------------------------
@@ -287,13 +287,20 @@ class Pipeline:
                 # 后面一旦有岗位就可以补发（否则今天这份日报就彻底没了）。
                 logger.info("日报：当前没有待推送的新岗位。")
                 return False
-            pages, keyboards = build_daily_report(jobs, self.config.show_unscored)
-            self.telegram.send_report_pages(pages, keyboards)
+            results = self.notifier.send_report(jobs, self.config.show_unscored)
+            if not results:
+                logger.error("日报：没有可用的推送通道，未发送（请检查 config.yaml 的 notify 段）。")
+                return False
+            if not any(results.values()):
+                # 有通道但全部失败：不标记已报，留到下一轮重试（宁重复，不丢失）
+                logger.error(f"日报：所有通道都发送失败 {results}，本轮不标记，下轮重试。")
+                return False
             self.db.mark_reported([j.job_uid for j in jobs])
             self.db.set_state("report_sent_date", today)
             self.db.log_event("system", "daily_report_sent",
-                              {"jobs": len(jobs), "pages": len(pages)})
-            logger.info(f"日报已推送：{len(jobs)} 个岗位，{len(pages)} 页。")
+                              {"jobs": len(jobs), "channels": results})
+            logger.info(f"日报已推送：{len(jobs)} 个岗位 → "
+                        f"{'、'.join(k for k, v in results.items() if v)}。")
             return True
         except Exception as exc:
             # 日报失败不允许带崩调度器；未 mark_reported 的岗位下轮兜底
@@ -348,8 +355,12 @@ class Pipeline:
         logger.info(f"用户反馈已记录：{job_uid} → {action}")
 
     def poll_feedback_once(self) -> None:
-        """调度器周期调用：拉一次 Telegram 更新。"""
+        """调度器周期调用：拉一次用户点击反馈。
+
+        只有支持交互的通道才会真正做事（目前仅 Telegram）——分发器内部已过滤，
+        所以即便当前用的是邮件通道，这个调用也是安全的空操作。
+        """
         try:
-            self.telegram.poll_feedback(self.handle_feedback)
+            self.notifier.poll_feedback(self.handle_feedback)
         except Exception as exc:
             logger.debug(f"反馈轮询异常（下轮重试）：{exc}")

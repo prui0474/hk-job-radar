@@ -73,6 +73,86 @@ class TelegramConfig:
 
 
 @dataclass
+class WecomConfig:
+    """企业微信群机器人（只有一串 webhook，最简单）。"""
+    webhook: str = ""
+
+
+@dataclass
+class WxPusherConfig:
+    """WxPusher：app_token + 若干 UID（关注公众号后得到的用户标识）。"""
+    app_token: str = ""
+    uids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class EmailConfig:
+    """SMTP 邮件。auth_code 是邮箱后台生成的【授权码】，不是登录密码。"""
+    smtp_host: str = ""
+    smtp_port: int = 465
+    user: str = ""
+    auth_code: str = ""
+    to: list[str] = field(default_factory=list)
+    use_ssl: bool = True
+
+
+@dataclass
+class NotifyConfig:
+    """推送总配置。
+
+    channels 是「要启用哪些通道」的列表，顺序就是用户的选择顺序——
+    免费版只保留第一个（见 tier.apply_free_limits），高级版可以全开。
+    四个通道完全平等，系统不预设谁优先。
+    """
+    channels: list[str] = field(default_factory=list)
+    telegram: TelegramConfig = field(default_factory=TelegramConfig)
+    wecom: WecomConfig = field(default_factory=WecomConfig)
+    wxpusher: WxPusherConfig = field(default_factory=WxPusherConfig)
+    email: EmailConfig = field(default_factory=EmailConfig)
+
+
+# ---------------------------------------------------------------------------
+# 求职阶段 → 岗位类型过滤
+#
+# 原版把「只能实习/兼职」写死在代码里，那是因为作者本人是在读学生、持学生
+# 签证，全职违法。但本产品要面向**所有**香港求职者，所以改成用户可选：
+#
+#   student  → 在读学生：只抓实习 / 兼职（学生签证的合规红线）
+#   graduate → 已毕业：只抓全职（含管培生 / 毕业生项目）
+#   both     → 毕业前后过渡期：全都要
+#
+# 「毕业生项目关键词」（管培生等）在任何模式下都放行——它们虽然标注 full-time，
+# 但入职时间在毕业之后，届时已持 IANG，属于合法且高价值的投递目标。
+# ---------------------------------------------------------------------------
+CAREER_STAGE_JOB_TYPES: dict[str, list[str]] = {
+    "student": ["internship", "part time"],
+    "graduate": ["full time"],
+    "both": ["internship", "part time", "full time"],
+}
+
+# 岗位类型 → 归一的「类型分类」名（与 keyword_filter.classify_job_type 的返回值对应）
+_FULLTIME_ALIASES = {"full time", "full-time", "fulltime", "permanent"}
+_PARTTIME_ALIASES = {"part time", "part-time", "parttime"}
+_INTERNSHIP_ALIASES = {"internship", "intern", "co-op", "coop"}
+
+# 「毕业生项目」关键词的识别词（管培生 / 毕业生培训计划等）。
+# 这类词无论放在 keywords 还是 graduate_keywords 里，都一律用【全职】类型去搜——
+# 它们在招聘网站上标注 full-time，但入职时间在毕业之后，届时已持 IANG，合法。
+# 放在 config 而不是 keyword_filter 里，是为了让搜索过滤与初筛安全网共用同一套判断。
+_GRADUATE_PROGRAMME_WORDS = (
+    "management trainee", "graduate trainee", "graduate programme",
+    "graduate program", "graduate scheme", "management associate",
+    "管培生", "見習管理", "见习管理", "管理培訓", "管理培训",
+)
+
+
+def _looks_like_graduate_programme(keyword: str) -> bool:
+    """关键词本身是不是「毕业生项目」类（如 management trainee）。"""
+    k = str(keyword or "").strip().lower()
+    return any(w in k for w in _GRADUATE_PROGRAMME_WORDS)
+
+
+@dataclass
 class LLMConfig:
     provider: str = "deepseek"
     base_url: str = "https://api.deepseek.com"
@@ -148,10 +228,24 @@ class AppConfig:
     realtime_threshold: int = 80
     show_unscored: bool = True
     max_job_age_days: int = 2   # 岗位新鲜度上限：只保留最近 N 天内发布的岗位
-    telegram: TelegramConfig = field(default_factory=TelegramConfig)
+    notify: NotifyConfig = field(default_factory=NotifyConfig)
     feedback_poll_seconds: int = 60
     report_time: str = "09:00"
+    # 高级版可配多个日报时间点；免费版只认上面的 report_time（每天 1 次），
+    # 具体由 tier.effective_report_times() 决定，这里只负责把配置读进来。
+    report_times: list[str] = field(default_factory=list)
+    # 求职阶段：student / graduate / both（决定抓哪些岗位类型，见下方 career_stage 常量）
+    career_stage: str = "student"
+    # 免费版限制的提示语（由 tier.apply_free_limits 填充，供 UI/CLI 展示）
+    tier_notes: list[str] = field(default_factory=list)
 
+    # ------------------------------------------------------------------
+    @property
+    def telegram(self) -> TelegramConfig:
+        """向后兼容别名：老代码/老文档里的 cfg.telegram 仍指向 notify.telegram。"""
+        return self.notify.telegram
+
+    # ------------------------------------------------------------------
     def enabled_sources(self) -> list[str]:
         """当前启用的抓取源列表（顺序固定，便于日志对照）。"""
         return [s for s in ("jobsdb", "linkedin", "indeed") if self.sources.get(s, False)]
@@ -164,11 +258,36 @@ class AppConfig:
         """某关键词搜索时应使用的岗位类型过滤。
 
         毕业生项目关键词（管培生等）→ 用「全职」过滤（它们是毕业后入职的
-        full-time 岗，合法）；其余关键词 → 用 job_types（默认实习/兼职）。
+        full-time 岗，合法）；其余关键词 → 用 job_types（由求职阶段决定）。
+
+        判断依据有两条，任一条命中即按毕业生项目处理：
+          ① 词在 graduate_keywords 列表里；
+          ② 词本身长得像毕业生项目（如 "management trainee"）——
+             这样用户即使把管培生词直接写进 keywords，也能被正确识别，
+             不会因为它被 internship 过滤掉而白白漏岗。
         """
-        if keyword in self.graduate_keywords:
+        if keyword in self.graduate_keywords or _looks_like_graduate_programme(keyword):
             return ["full time"]
         return self.job_types
+
+    def allowed_job_type_classes(self) -> set[str]:
+        """当前配置允许放行的岗位类型分类（keyword_filter 的「安全网」据此判定）。
+
+        - ""（未标注类型）：始终放行，交给 LLM 判定——宁可多看，不可漏看；
+        - "graduate programme"：始终放行（毕业后入职，任何阶段都合法且有价值）；
+        - 其余按 job_types 逐个映射：写了 internship 才放行实习，写了 full time
+          才放行全职。这正是 career_stage 三种模式生效的地方。
+        """
+        allowed: set[str] = {"", "graduate programme"}
+        for jt in self.job_types:
+            j = str(jt).strip().lower()
+            if j in _INTERNSHIP_ALIASES:
+                allowed.add("internship")
+            elif j in _PARTTIME_ALIASES:
+                allowed.add("part time")
+            elif j in _FULLTIME_ALIASES:
+                allowed.add("full time")
+        return allowed
 
     def keywords_per_cycle_for_source(self, source: str) -> int:
         """本轮该站点抓几个关键词；返回 0 表示「不轮转，抓全部关键词」。
@@ -206,11 +325,94 @@ class AppConfig:
 # ---------------------------------------------------------------------------
 # 加载与校验
 # ---------------------------------------------------------------------------
+def _normalize_career_stage(value: object) -> str:
+    """把 career_stage 归一成 student / graduate / both。
+
+    写错或没写都落到 student —— 这是最保守的默认值：只抓实习/兼职，
+    对学生签证用户绝对安全（宁可少抓，不可让学生收到违法全职岗）。
+    """
+    raw = str(value or "").strip().lower()
+    aliases = {
+        "student": "student", "在读": "student", "在读学生": "student", "学生": "student",
+        "graduate": "graduate", "毕业": "graduate", "已毕业": "graduate", "毕业生": "graduate",
+        "both": "both", "all": "both", "两者": "both", "都要": "both", "不限": "both",
+    }
+    stage = aliases.get(raw, "student")
+    if raw and raw not in aliases:
+        logger.warning(f"career_stage 取值「{value}」无法识别，已按 student 处理"
+                       f"（可选：student / graduate / both）。")
+    return stage
+
+
+def _as_str_list(value: object) -> list[str]:
+    """把配置里的「一个字符串」或「字符串列表」统一成去空的字符串列表。
+
+    这样 email.to 既可以写 `to: "a@b.com"`，也可以写成
+    `to:\n  - "a@b.com"`，对小白更宽容。
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parts = value.replace(",", " ").replace(";", " ").split()
+        return [p.strip() for p in parts if p.strip()]
+    if isinstance(value, (list, tuple)):
+        return [str(x).strip() for x in value if str(x).strip()]
+    return []
+
+
+def _parse_notify(raw: dict) -> NotifyConfig:
+    """解析 notify 段，并兼容老配置的顶层 telegram 段。
+
+    兼容规则（很重要，别删）：老用户的 config.yaml 里只有顶层 `telegram:`，
+    没有 `notify:`。此时自动当作「只启用 Telegram」——升级后不会突然收不到消息。
+    """
+    notify_raw = raw.get("notify")
+    if notify_raw is None:
+        notify_raw = {}
+    if not isinstance(notify_raw, dict):
+        raise ConfigError("config.yaml 的 notify 段必须是键值对结构（对照 config.example.yaml 检查）。")
+
+    # Telegram：优先读 notify.telegram，找不到再回落到顶层 telegram（向后兼容）
+    tg_raw = notify_raw.get("telegram")
+    if not isinstance(tg_raw, dict):
+        tg_raw = raw.get("telegram") if isinstance(raw.get("telegram"), dict) else {}
+    we_raw = notify_raw.get("wecom") if isinstance(notify_raw.get("wecom"), dict) else {}
+    wx_raw = notify_raw.get("wxpusher") if isinstance(notify_raw.get("wxpusher"), dict) else {}
+    em_raw = notify_raw.get("email") if isinstance(notify_raw.get("email"), dict) else {}
+
+    nc = NotifyConfig(
+        telegram=TelegramConfig(
+            bot_token=str(tg_raw.get("bot_token", "")).strip(),
+            chat_id=str(tg_raw.get("chat_id", "")).strip(),
+        ),
+        wecom=WecomConfig(webhook=str(we_raw.get("webhook", "")).strip()),
+        wxpusher=WxPusherConfig(
+            app_token=str(wx_raw.get("app_token", "")).strip(),
+            uids=_as_str_list(wx_raw.get("uids")),
+        ),
+        email=EmailConfig(
+            smtp_host=str(em_raw.get("smtp_host", "")).strip(),
+            smtp_port=int(em_raw.get("smtp_port", 465) or 465),
+            user=str(em_raw.get("user", "")).strip(),
+            auth_code=str(em_raw.get("auth_code", "")).strip(),
+            to=_as_str_list(em_raw.get("to")),
+            use_ssl=bool(em_raw.get("use_ssl", True)),
+        ),
+    )
+
+    channels = [str(c).strip().lower() for c in (notify_raw.get("channels") or []) if str(c).strip()]
+    if not channels and (nc.telegram.bot_token or nc.telegram.chat_id):
+        # 老配置升级路径：只有顶层 telegram 段 → 只启用 Telegram
+        channels = ["telegram"]
+    nc.channels = channels
+    return nc
+
+
 def load_config(path: Path | None = None) -> AppConfig:
     """读取 config.yaml → AppConfig。
 
     文件不存在时不抛异常：返回默认配置并打 WARNING（stats 等只读命令
-    仍可用）；真正需要凭据的 run/report 由 require_telegram() 把关。
+    仍可用）；真正需要凭据的 run/report/once 由 require_notify() 把关。
     """
     cfg_path = path or CONFIG_PATH
     if not cfg_path.exists():
@@ -233,8 +435,14 @@ def load_config(path: Path | None = None) -> AppConfig:
         str(k).strip().lower(): [str(v).strip().lower() for v in vs]
         for k, vs in (raw.get("keyword_synonyms") or {}).items()
     }
-    cfg.job_types = [str(j).strip().lower() for j in raw.get("job_types", cfg.job_types)
-                     if str(j).strip()]
+    # 求职阶段决定「抓哪些岗位类型」。优先级：显式写 job_types > 用 career_stage 推导。
+    # 保留显式 job_types 是为了不挡住高级用户（懂的人可以直接写类型列表）。
+    cfg.career_stage = _normalize_career_stage(raw.get("career_stage"))
+    if raw.get("job_types") is not None:
+        cfg.job_types = [str(j).strip().lower() for j in (raw.get("job_types") or [])
+                         if str(j).strip()]
+    else:
+        cfg.job_types = list(CAREER_STAGE_JOB_TYPES[cfg.career_stage])
     cfg.graduate_keywords = [str(k).strip().lower() for k in
                              raw.get("graduate_keywords", cfg.graduate_keywords)
                              if str(k).strip()]
@@ -277,15 +485,17 @@ def load_config(path: Path | None = None) -> AppConfig:
     cfg.show_unscored = bool(raw.get("show_unscored", cfg.show_unscored))
     cfg.max_job_age_days = int(raw.get("max_job_age_days", cfg.max_job_age_days))
 
-    tg_raw = raw.get("telegram") or {}
-    cfg.telegram = TelegramConfig(
-        bot_token=str(tg_raw.get("bot_token", "")).strip(),
-        chat_id=str(tg_raw.get("chat_id", "")).strip(),
-    )
+    cfg.notify = _parse_notify(raw)
     cfg.feedback_poll_seconds = int(raw.get("feedback_poll_seconds", cfg.feedback_poll_seconds))
     cfg.report_time = str(raw.get("report_time", cfg.report_time)).strip()
+    cfg.report_times = [str(t).strip() for t in (raw.get("report_times") or []) if str(t).strip()]
 
     _validate(cfg)
+
+    # 免费版额度裁剪（延迟导入：tier 需要 config 的 PROJECT_ROOT，模块级导入会成环）
+    from hk_job_radar import tier
+    cfg.tier_notes = tier.apply_free_limits(cfg)
+    tier.log_limits(cfg.tier_notes)
     return cfg
 
 
@@ -294,14 +504,15 @@ def _validate(cfg: AppConfig) -> None:
     if not cfg.keywords:
         raise ConfigError("keywords 不能为空：请在 config.yaml 中至少配置一个关键词。")
     if not cfg.job_types:
-        raise ConfigError("job_types 不能为空：学生签证在读期间必须只抓实习/兼职，"
-                          "请在 config.yaml 中至少配置一个岗位类型（如 internship、part time）。")
-    # 全职有多种写法（full time / full-time / fulltime / permanent），
-    # 只要出现任一写法都提醒一句（不阻断：毕业后持有 IANG 的用户确需全职）。
-    _fulltime_variants = {"full time", "full-time", "fulltime", "permanent"}
-    if any(jt in _fulltime_variants for jt in cfg.job_types):
-        logger.warning("job_types 含全职类型（full time）：全职对学生签证在读学生违法，"
-                       "请确认你已毕业并取得 IANG 签证后再开启。")
+        raise ConfigError(
+            f"job_types 不能为空：请在 config.yaml 里设置 career_stage"
+            f"（student = 实习/兼职、graduate = 全职、both = 都要），"
+            f"或直接手写 job_types 列表（如 internship、part time）。")
+    # 全职安全提示：只在「当前是在读学生」时提醒——因为只有这时全职才违法。
+    # 选了 graduate / both 的用户本来就是奔着全职去的，反复警告只会烦人。
+    if cfg.career_stage == "student" and any(jt in _FULLTIME_ALIASES for jt in cfg.job_types):
+        logger.warning("career_stage=student 却允许 full time：全职对学生签证在读学生违法，"
+                       "请确认你已毕业并取得 IANG 签证（或把 career_stage 改成 graduate/both）。")
     # 关键词轮转取值校验：写错的话轮转会静默失效，不如启动即报错
     rot_values = {"per_cycle": cfg.keyword_rotation_per_cycle,
                   **{f"per_source.{k}": v for k, v in cfg.keyword_rotation_per_source.items()}}
@@ -330,19 +541,71 @@ def _validate(cfg: AppConfig) -> None:
         raise ConfigError("max_job_age_days 必须 >= 1（岗位新鲜度上限，单位天）。")
     if cfg.realtime_threshold < cfg.score_threshold:
         raise ConfigError("realtime_threshold 应 >= score_threshold（实时推送的岗位必然进日报）。")
+    # 推送通道名合法性：写错名字会让"配了却收不到"变成无声故障，不如启动即报错
+    from hk_job_radar import tier   # 延迟导入避免循环依赖
+    unknown = [c for c in (cfg.notify.channels or []) if c not in tier.VALID_CHANNELS]
+    if unknown:
+        raise ConfigError(
+            f"notify.channels 里有无法识别的通道名：{unknown}。"
+            f"可选值为 {' / '.join(tier.VALID_CHANNELS)}。")
+    # 高级版的多时间点日报；格式写错时静默失效最难查，所以逐个校验
+    for t in cfg.report_times:
+        if not re.fullmatch(r"\d{1,2}:\d{2}", t):
+            raise ConfigError(f"report_times 里的「{t}」格式错误，应为 HH:MM，如 09:00、18:30。")
+
+
+def require_notify(cfg: AppConfig) -> None:
+    """run / report / once 的推送门禁：至少要有一个「配置完整」的通道。
+
+    为什么要有这道门禁：推送是这个产品唯一的输出口。通道没配好时，程序会
+    默默跑完、什么都不发——用户等了半天，还以为在正常工作。所以这里提前
+    拦住，并用中文告诉他"差什么、去哪里拿"。
+    """
+    from hk_job_radar import tier
+    from hk_job_radar.notify.dispatch import build_channel
+
+    names = list(cfg.notify.channels or [])
+    if not names:
+        raise ConfigError(
+            "还没有启用任何推送通道：请在 config.yaml 的 notify.channels 里写一个，"
+            f"可选 {' / '.join(tier.VALID_CHANNELS)}（四者完全平等，任选其一）。\n"
+            + _channel_setup_hint())
+
+    problems: list[str] = []
+    for name in names:
+        channel = build_channel(name, cfg)
+        if channel is None:
+            problems.append(f"「{name}」不是合法通道名")
+            continue
+        ok, message = channel.check()
+        if ok:
+            return          # 有一个通道可用就够了，直接放行
+        problems.append(f"{tier.channel_label(name)} —— {message}")
+
+    raise ConfigError(
+        "已启用的推送通道都还没配好，消息发不出去：\n  · "
+        + "\n  · ".join(problems)
+        + "\n\n" + _channel_setup_hint())
+
+
+def _channel_setup_hint() -> str:
+    """每个通道「去哪拿配置」的中文指引（复制粘贴级）。"""
+    return (
+        "各通道怎么配（config.yaml 的 notify 段）：\n"
+        "  企业微信 wecom：手机装「企业微信」→ 建一个只有自己的群 → 群设置里加「群机器人」\n"
+        "                  → 复制它的 Webhook 地址，填进 notify.wecom.webhook\n"
+        "  WxPusher：打开 wxpusher.zjiecode.com → 微信扫码登录 → 创建应用拿 appToken\n"
+        "             → 在「用户管理」里复制你的 UID，填进 notify.wxpusher.app_token / uids\n"
+        "  邮件 email：登录你的邮箱网页版 → 设置里开启 SMTP → 生成【授权码】（不是登录密码）\n"
+        "              → 填 notify.email.smtp_host / user / auth_code / to\n"
+        "  Telegram：与 @BotFather 对话创建机器人拿 token；给它发一条 /start 后访问\n"
+        "            https://api.telegram.org/bot<token>/getUpdates 取 chat_id"
+    )
 
 
 def require_telegram(cfg: AppConfig) -> None:
-    """run / report 命令的凭据门禁：缺 token 时用中文提示并中止。"""
-    if not cfg.telegram.bot_token or not cfg.telegram.chat_id:
-        raise ConfigError(
-            "Telegram 推送未配置：请在 config.yaml 的 telegram 段填写 bot_token 与 chat_id。\n"
-            "  1) 与 @BotFather 对话创建机器人获取 token；\n"
-            "  2) 给你的机器人发一条 /start，再访问\n"
-            "     https://api.telegram.org/bot<你的token>/getUpdates 找到 chat_id。"
-        )
-    if not re.fullmatch(r"\d+:[\w-]+", cfg.telegram.bot_token):
-        raise ConfigError("telegram.bot_token 格式不像合法 token（应形如 123456789:ABCdef...）。")
+    """（已弃用）旧名字，保留以免外部脚本报错；实际转调 require_notify。"""
+    require_notify(cfg)
 
 
 def require_llm_key(cfg: AppConfig) -> None:
@@ -396,6 +659,9 @@ def setup_logging() -> None:
 __all__ = [
     "HK_TZ", "PROJECT_ROOT", "CONFIG_PATH", "DATA_DIR", "DB_PATH", "PROFILE_PATH",
     "BROWSER_DIR",
-    "ConfigError", "AppConfig", "TelegramConfig", "LLMConfig",
-    "load_config", "require_telegram", "require_llm_key", "setup_logging",
+    "CAREER_STAGE_JOB_TYPES",
+    "ConfigError", "AppConfig", "TelegramConfig", "NotifyConfig",
+    "WecomConfig", "WxPusherConfig", "EmailConfig", "LLMConfig",
+    "load_config", "require_notify", "require_telegram", "require_llm_key",
+    "setup_logging",
 ]

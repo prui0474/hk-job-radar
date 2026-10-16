@@ -13,11 +13,12 @@ from pathlib import Path
 
 from loguru import logger
 
+from hk_job_radar import tier
 from hk_job_radar.config import (
     ConfigError,
     load_config,
     require_llm_key,
-    require_telegram,
+    require_notify,
     setup_logging,
 )
 from hk_job_radar.db import Database
@@ -31,7 +32,7 @@ from hk_job_radar.scheduler import Scheduler
 def cmd_run(args: argparse.Namespace) -> int:
     """`hk_radar run`：启动常驻监控（推荐配合 Windows 任务计划开机自启）。"""
     config = load_config()
-    require_telegram(config)    # 缺 token/chat_id → 中文报错并退出
+    require_notify(config)      # 一个可用的推送通道都没有 → 中文报错并退出
     require_llm_key(config)     # 缺 API key → 提示设置（打分会全降级，明确告知）
     db = Database(str(_db_path()))
     pipeline = Pipeline(config, db)
@@ -40,9 +41,9 @@ def cmd_run(args: argparse.Namespace) -> int:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    """`hk_radar report now`：立即生成并推送今日日报（不等 09:00 定时）。"""
+    """`hk_radar report now`：立即生成并推送今日日报（不等定时）。"""
     config = load_config()
-    require_telegram(config)
+    require_notify(config)
     db = Database(str(_db_path()))
     # force=True：用户手动点名要一份，就给他一份（不受"今天已推过"的去重限制）
     Pipeline(config, db).run_daily_report(force=True)
@@ -57,7 +58,7 @@ def cmd_once(args: argparse.Namespace) -> int:
     与常驻模式共用同一套配额/轮转/去重逻辑，不会多抓、也不会重复推。
     """
     config = load_config()
-    require_telegram(config)
+    require_notify(config)
     require_llm_key(config)
     db = Database(str(_db_path()))
     pipeline = Pipeline(config, db)
@@ -68,12 +69,14 @@ def cmd_once(args: argparse.Namespace) -> int:
         print(f"  {source:<9} 抓到 {stat.get('fetched', 0):>3} → 初筛留 {stat.get('kept', 0):>3}"
               f" → 新入库 {stat.get('new', 0):>3} → 已打分 {stat.get('scored', 0):>3}"
               f"（打分失败 {stat.get('degraded', 0)}）")
-    print(f"  实时推送（≥{config.realtime_threshold} 分）   {summary.get('pushed_realtime', 0)} 个")
+    print(f"  实时推送（≥{config.realtime_threshold} 分）   {summary.get('pushed_realtime', 0)} 个"
+          f"{'' if tier.realtime_push_enabled() else '（免费版不含秒推，已并入日报）'}")
+    print(f"  推送通道：{'、'.join(pipeline.notifier.labels) or '（未配置）'}")
     print(f"  日报：{'已推送 ✅' if sent else '本次无需推送（今日已推过 / 暂无新岗位）'}")
     print("─" * 52)
     if not sent:
         print("提示：日报今天已经推送过了，新岗位会累计到明天那份；")
-        print("      想强制再要一份，双击 report_now.bat。")
+        print("      想强制再要一份，双击 report_now.bat（Mac 为 report_now.command）。")
     print("✅ 本轮结束，可以关闭本窗口（直接关机也行）。")
     return 0
 

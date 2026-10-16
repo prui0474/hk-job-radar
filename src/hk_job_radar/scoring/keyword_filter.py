@@ -90,27 +90,34 @@ class KeywordFilter:
 
     # ------------------------------------------------------------------
     def filter(self, jobs: list[JobPosting]) -> list[JobPosting]:
-        """过滤岗位列表：先做岗位类型安全网（剔除全职），再按关键词+同义词筛选。
+        """过滤岗位列表：先做岗位类型安全网，再按关键词+同义词筛选。
 
-        命中关键词者在返回时带上 keyword_matched（放行证据）；被岗位类型
-        安全网剔除的全职岗位会单独计数并记日志。
+        「安全网」的放行集合由 config.allowed_job_type_classes() 决定，
+        也就是由 career_stage 决定——在读学生剔除全职、已毕业剔除实习兼职、
+        both 全放行。这样同一套代码能服务不同身份的求职者。
+
+        命中关键词者在返回时带上 keyword_matched（放行证据）；被类型安全网
+        剔除的岗位会单独计数并记日志。
         """
         kept: list[JobPosting] = []
-        fulltime_dropped = 0
+        type_dropped = 0
+        allowed = self.config.allowed_job_type_classes()
         for job in jobs:
             haystack = f"{job.title} {job.description_snippet}".lower()
-            # 岗位类型安全网：URL 过滤是主防线，这里再兜一道，绝不放过全职。
-            if self.classify_job_type(haystack) == "full time":
-                fulltime_dropped += 1
-                logger.debug(f"岗位类型安全网剔除全职：{job.title}（{job.url}）")
+            # 岗位类型安全网：URL 过滤是主防线，这里再兜一道。
+            kind = self.classify_job_type(haystack)
+            if kind not in allowed:
+                type_dropped += 1
+                logger.debug(f"岗位类型安全网剔除「{kind}」：{job.title}（{job.url}）")
                 continue
             matched = self._match(haystack)
             if matched:
                 job.keyword_matched = matched
                 kept.append(job)
-        keyword_dropped = len(jobs) - len(kept) - fulltime_dropped
+        keyword_dropped = len(jobs) - len(kept) - type_dropped
         logger.info(f"关键词初筛：{len(jobs)} → {len(kept)}"
-                    f"（剔除 {fulltime_dropped} 个全职，"
+                    f"（剔除 {type_dropped} 个不符合当前求职阶段"
+                    f"（{self.config.career_stage}）的岗位，"
                     f"丢弃 {keyword_dropped} 个不相关岗位）")
         return kept
 

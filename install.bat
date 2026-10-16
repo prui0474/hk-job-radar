@@ -107,8 +107,10 @@ echo.
 echo ============================================
 echo  Setup complete! 4 small things left:
 echo.
-echo   1. Open config.yaml in Notepad and fill in:
-echo        - bot_token / chat_id  (create a bot via @BotFather on Telegram)
+echo   1. Open config.yaml in Notepad and set up:
+echo        - notify.channels: pick ONE (wecom / wxpusher / email / telegram)
+echo          then fill in that channel's block right below it
+echo        - career_stage: student / graduate / both
 echo        - replace "keywords" with YOUR OWN target job titles
 echo   2. Open data\profiles\profile.yaml in Notepad and fill in
 echo        YOUR OWN background. This is what the AI scores jobs against
