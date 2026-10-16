@@ -1,0 +1,234 @@
+name: 兼容性检查
+
+# 为什么要有这个工作流：
+#   作者本人手边没有 Mac，但项目要让 Mac 用户也能用。
+#   GitHub 给公开仓库提供免费的 macOS 虚拟机，所以每次提交代码，
+#   它就代替"真机测试"在真实 macOS 上跑一遍安装 → 启动 → 自检，
+#   把结果贴在提交记录里。这条流水线能覆盖约 90% 的跨平台兼容问题。
+#
+#   第二个 job 跑 Windows，专门盯着「编码 / 换行符」这类
+#   "我这台机器好好的、别人那儿就崩" 的坑，防止已经修好的 bug 复发。
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支连续提交时，取消上一次还在跑的任务，省时间
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+
+  # ==========================================================================
+  # macOS：模拟"Mac 用户拿到项目 → 双击 install.command → 能跑"
+  # ==========================================================================
+  macos:
+    name: macOS 全流程（安装 + 启动 + 自检）
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      CI: "true"
+      PYTHONUTF8: "1"
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 环境信息
+        run: |
+          sw_vers
+          echo "CPU 架构      : $(uname -m)"
+          echo "bash 版本     : $(bash --version | head -1)"
+          echo "python3 路径  : $(command -v python3)"
+          python3 --version
+
+      - name: 编码规范检查（换行符 / BOM / 纯 ASCII）
+        run: python3 scripts/check_encoding.py
+
+      - name: 可执行位检查（.command 必须能双击运行）
+        run: |
+          fail=0
+          for f in *.command; do
+            if [ -x "$f" ]; then echo "[OK]   $f"; else echo "[FAIL] $f 没有可执行权限"; fail=1; fi
+          done
+          exit $fail
+
+      - name: Shell 语法检查
+        run: |
+          for f in scripts/common.sh *.command; do
+            echo "--- $f"
+            bash -n "$f"
+          done
+          echo "全部脚本语法通过"
+
+      - name: 用 macOS 自带的 bash 3.2 再查一遍（用户机器上的就是这个版本）
+        run: |
+          for f in scripts/common.sh *.command; do
+            /bin/bash -n "$f"
+          done
+          echo "bash 3.2 兼容性检查通过"
+
+      - name: Python 语法编译
+        run: python3 -m compileall -q src/ run.py && echo "编译通过"
+
+      - name: 运行 install.command（真实安装：虚拟环境 + 依赖 + Chromium）
+        timeout-minutes: 20
+        run: ./install.command
+
+      - name: 校验安装产物
+        run: |
+          for p in .venv/bin/python config.yaml data/profiles/profile.yaml; do
+            if [ -e "$p" ]; then echo "[OK]   $p"; else echo "[FAIL] 缺少 $p"; exit 1; fi
+          done
+          .venv/bin/python -c "
+          import playwright, yaml, openai, loguru, apscheduler, requests, tenacity
+          print('关键依赖全部可导入')
+          "
+
+      - name: 启动脚本能读到 Python 环境
+        run: |
+          set -u
+          source scripts/common.sh
+          echo "项目根目录: $RADAR_ROOT"
+          P="$(radar_find_python)"
+          echo "找到解释器: $P"
+          case "$P" in
+            */bin/python) echo "[OK] Mac 路径形态正确" ;;
+            *) echo "[FAIL] 解释器路径不是 Mac 形态"; exit 1 ;;
+          esac
+
+      - name: launchd 定时任务生成 + plutil 校验
+        run: |
+          set -u
+          source scripts/common.sh
+          radar_render_launchd_plist "$RADAR_ROOT/.venv/bin/python" "$RADAR_ROOT" > /tmp/radar.plist
+          plutil -lint /tmp/radar.plist
+          echo "--- 生成的 plist ---"
+          cat /tmp/radar.plist
+
+      - name: stats 命令可用（只读，不需要任何凭据）
+        run: .venv/bin/python run.py stats
+
+      - name: 缺配置时应给中文指引，而不是英文 traceback
+        run: |
+          set +e
+          out="$(.venv/bin/python run.py once 2>&1)"
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" -eq 0 ]; then echo "[FAIL] 预期应当失败，但成功了"; exit 1; fi
+          if echo "$out" | grep -q "配置错误"; then
+            echo "[OK] 中文报错门禁工作正常（退出码 $code）"
+          else
+            echo "[FAIL] 没有出现中文配置错误提示"; exit 1
+          fi
+
+      - name: 现有测试脚本全部通过
+        run: |
+          fail=0
+          for f in tests/test_*.py; do
+            [ -e "$f" ] || continue
+            echo "--- $f"
+            .venv/bin/python "$f" || fail=1
+          done
+          exit $fail
+
+      - name: 汇总
+        run: |
+          echo "macOS 全流程通过。可以放心告诉用户：Mac 上双击 install.command 即可。"
+
+  # ==========================================================================
+  # Windows：防止「编码 / 换行符」类 bug 复发
+  # ==========================================================================
+  windows:
+    name: Windows 回归（编码 + 依赖安装 + 测试）
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      CI: "true"
+      PYTHONUTF8: "1"
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 环境信息
+        shell: bash
+        run: |
+          python --version
+          echo "系统 ANSI 代码页信息："
+          python -c "import locale, sys; print('preferred =', locale.getpreferredencoding(False)); print('utf8_mode =', sys.flags.utf8_mode)"
+
+      - name: 编码规范检查（.bat 必须 CRLF + 纯 ASCII）
+        shell: bash
+        run: python scripts/check_encoding.py
+
+      - name: Python 语法编译
+        shell: bash
+        run: python -m compileall -q src/ run.py && echo "编译通过"
+
+      - name: 建立虚拟环境并安装依赖（顺带回归 pip 读 requirements.txt 的编码修复）
+        shell: bash
+        run: |
+          python -m venv .venv
+          ./.venv/Scripts/python.exe -m pip install --disable-pip-version-check -r requirements.txt
+          ./.venv/Scripts/python.exe -m pip list | head -30
+
+      - name: 依赖可导入
+        shell: bash
+        run: |
+          ./.venv/Scripts/python.exe -c "
+          import playwright, yaml, openai, loguru, apscheduler, requests, tenacity
+          print('关键依赖全部可导入')
+          "
+
+      - name: stats 命令可用（不需要凭据）
+        shell: bash
+        run: ./.venv/Scripts/python.exe run.py stats
+
+      - name: 缺配置时应给中文指引，而不是英文 traceback
+        shell: bash
+        run: |
+          set +e
+          out="$(./.venv/Scripts/python.exe run.py once 2>&1)"
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" -eq 0 ]; then echo "[FAIL] 预期应当失败，但成功了"; exit 1; fi
+          echo "$out" | grep -q "配置错误" && echo "[OK] 中文报错门禁工作正常（退出码 $code）" \
+            || { echo "[FAIL] 没有出现中文配置错误提示"; exit 1; }
+
+      - name: .bat 在当前代码页下可被 cmd 正确解析（历史 bug 回归）
+        shell: bash
+        run: |
+          set +e
+          out="$(cmd //c "run_once.bat < nul" 2>&1)"
+          set -e
+          echo "$out" | head -40
+          bad=0
+          # 这三句是「换行符 / 编码」出问题时 cmd 的典型报错，出现即为复发
+          for m in "不是内部或外部命令" "系统找不到指定的路径" "此时不应有"; do
+            if echo "$out" | grep -q "$m"; then echo "[FAIL] 命中报错模式：$m"; bad=1; fi
+          done
+          exit $bad
+
+      - name: 现有测试脚本全部通过
+        shell: bash
+        run: |
+          fail=0
+          for f in tests/test_*.py; do
+            [ -e "$f" ] || continue
+            echo "--- $f"
+            ./.venv/Scripts/python.exe "$f" || fail=1
+          done
+          exit $fail

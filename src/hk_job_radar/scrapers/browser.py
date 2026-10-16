@@ -74,11 +74,13 @@ class BrowserManager:
         if self._playwright is None:
             self._playwright = sync_playwright().start()
 
-        # user_data_dir：每站独立浏览器配置目录（data/browser/<source>/）
-        # 推导自 config.py 的 DATA_DIR 常量，而不是 AppConfig——
+        # user_data_dir：每站独立浏览器配置目录（默认 data/browser/<source>/）
+        # 推导自 config.py 的 BROWSER_DIR 常量，而不是 AppConfig——
         # 路径属于项目结构而非用户配置，不应出现在 config.yaml 里。
-        from hk_job_radar.config import DATA_DIR
-        user_data_dir = DATA_DIR / "browser" / source_key
+        # BROWSER_DIR 会在「Windows + 项目路径含中文」时自动切到 %LOCALAPPDATA%，
+        # 见 config.py 的 _resolve_browser_dir()。
+        from hk_job_radar.config import BROWSER_DIR
+        user_data_dir = BROWSER_DIR / source_key
         if fresh and user_data_dir.exists():
             # 删除旧 profile 以确保"全新访客"身份（避免被站点软性限流识别为
             # 回头客）。这是本项目自己的数据目录，非用户个人文件，删除安全。
@@ -87,7 +89,8 @@ class BrowserManager:
         user_data_dir.mkdir(parents=True, exist_ok=True)
 
         headless = self.config.browser_headless if force_headless is None else force_headless
-        logger.debug(f"启动 persistent context：{source_key}（headless={headless}）")
+        logger.debug(f"启动 persistent context：{source_key}"
+                     f"（headless={headless}，档案目录={user_data_dir}）")
         context = self._playwright.chromium.launch_persistent_context(
             user_data_dir=str(user_data_dir),
             headless=headless,

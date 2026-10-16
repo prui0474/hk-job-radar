@@ -15,8 +15,11 @@
 
 *.bat text eol=crlf
 
-# Linux/macOS 的 shell 脚本反过来，必须是 LF
+# Linux/macOS 的 shell 脚本反过来，必须是 LF。
+# *.command 是 macOS 的「双击即运行」脚本（本质是 bash），同样必须是 LF：
+# CRLF 会让 bash 报 "$'\r': command not found"，用户看到的就是一句莫名其妙的报错。
 *.sh  text eol=lf
+*.command text eol=lf
 
 # git 自身的配置文件一律 LF（放在最后，优先级最高）
 .gitattributes text eol=lf

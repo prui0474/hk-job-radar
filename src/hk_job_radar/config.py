@@ -14,6 +14,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# 注意：os.name == "nt" 判断 Windows，比 sys.platform 更直接（本文件已用 os）
+
 import yaml
 from loguru import logger
 
@@ -30,6 +32,34 @@ DATA_DIR = PROJECT_ROOT / "data"
 LOG_DIR = DATA_DIR / "logs"
 DB_PATH = DATA_DIR / "radar.db"
 PROFILE_PATH = DATA_DIR / "profiles" / "profile.yaml"
+
+
+def _resolve_browser_dir() -> Path:
+    """浏览器档案根目录（每个站点在它下面各占一个子目录）。
+
+    默认就是项目内 data/browser/（好处：整个文件夹删掉 = 卸载干净）。
+    唯一的例外：**Windows 上如果项目路径含非 ASCII 字符**（比如用户名叫
+    「张三」，路径是 C:\\Users\\张三\\Desktop\\hk_job_radar\\），就改用系统目录。
+
+    为什么只对 Windows 兜底：Chromium 在 Windows 下对非 ASCII 的
+    user_data_dir 支持不稳定，可能出现启动失败或档案写坏；macOS/Linux 的
+    文件系统原生 UTF-8，不存在这个问题，所以不改变它们的默认行为（也就不会
+    让已有用户的登录状态"搬家"）。
+    兜底位置选 %LOCALAPPDATA%：属「本机应用数据」，不会被 OneDrive 同步，
+    也不会因为移动项目文件夹而失效。
+    """
+    preferred = DATA_DIR / "browser"
+    if os.name != "nt":
+        return preferred
+    try:
+        str(PROJECT_ROOT).encode("ascii")
+    except UnicodeEncodeError:
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home())
+        return Path(base) / "hk_job_radar" / "browser"
+    return preferred
+
+
+BROWSER_DIR = _resolve_browser_dir()
 
 
 class ConfigError(Exception):
@@ -365,6 +395,7 @@ def setup_logging() -> None:
 # 时区对象也在此导出，供 scheduler 等模块复用（单一来源）
 __all__ = [
     "HK_TZ", "PROJECT_ROOT", "CONFIG_PATH", "DATA_DIR", "DB_PATH", "PROFILE_PATH",
+    "BROWSER_DIR",
     "ConfigError", "AppConfig", "TelegramConfig", "LLMConfig",
     "load_config", "require_telegram", "require_llm_key", "setup_logging",
 ]

@@ -13,8 +13,12 @@
   <img alt="License" src="https://img.shields.io/badge/License-MIT-green">
   <img alt="Region" src="https://img.shields.io/badge/Region-Hong%20Kong-red">
   <img alt="Self-hosted" src="https://img.shields.io/badge/Deploy-Local%20only-orange">
+  <img alt="Platform" src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey">
 </p>
 
+> 🍎 **On a Mac?** One-click install via `.command` scripts —
+> see **[Mac 安装教程 →](docs/mac-安装教程.md)** (Chinese, click-by-click).
+>
 > 🧰 **Never used a terminal? / 完全新手？**
 > Follow the step-by-step beginner's guide (Chinese, from installing Python to
 > receiving your first digest): **[保姆级新手教程 →](docs/getting-started-zh.md)**
@@ -94,12 +98,15 @@ flowchart LR
 
 ### Limitations
 
-- **Some technical comfort helps** — though the one-click installer (`install.bat`)
-  removes most of it; you still need a DeepSeek key and a Telegram bot.
+- **Some technical comfort helps** — though the one-click installer (`install.bat`
+  on Windows, `install.command` on macOS) removes most of it; you still need a
+  DeepSeek key and a Telegram bot.
 - **Depends on third-party sites** — scraping may be rate-limited or blocked at any
   time; LinkedIn & Indeed need a login / Cloudflare pass-through.
 - **Not 100% coverage** — it's a radar, not a guarantee of every posting.
 - **LLM score is an estimate** — a relevance signal, never a hiring decision.
+- **Telegram is currently the only channel** — it is not reachable from mainland
+  China without a VPN. WeChat / email channels are planned.
 
 ### Quick start
 
@@ -121,6 +128,28 @@ flowchart LR
 > you're looking for* and *who you are*. Skip them and the tool still runs, but it
 > will fetch the wrong roles and score them against an empty profile.
 > Exact click-by-click steps: [beginner's guide](docs/getting-started-zh.md) (Chinese).
+
+**Option A2 — One-click install on macOS (no terminal needed)**
+
+Same flow, but the files end in `.command` instead of `.bat`:
+
+1. Install [Python 3.10+ for macOS](https://www.python.org/downloads/macos/)
+   (the Python that ships with macOS is 3.9 and is too old).
+2. **Code → Download ZIP**, unzip it, and move the folder to `/Users/<you>/`
+   (**avoid Desktop / Documents / Downloads** — macOS guards those and the
+   browser may fail with `Operation not permitted`).
+3. **Control-click `install.command` → Open → Open** (first launch only; macOS
+   blocks downloaded scripts — see `MAC-打不开就读我.txt` if the button is missing).
+4. Fill in `config.yaml` (bot token, your keywords) and
+   `data/profiles/profile.yaml` — same as Windows steps 4–5.
+5. Double-click `login_jobsdb.command` once, then `run_once.command` (single sweep)
+   or `start.command` (keep running).
+
+`install.command` also registers a **daily 09:00 launchd job**; if the Mac is asleep
+at that moment, it runs on wake. Remove it any time with `关闭自动运行.command`.
+
+> Full version, with every screen explained:
+> **[Mac 安装教程 →](docs/mac-安装教程.md)**
 
 **Option B — Manual (terminal, one-time setup)**
 
@@ -212,6 +241,13 @@ description and scores become far less meaningful.
 
 ```
 hk_job_radar/
+├── install.bat / start.bat / run_once.bat      # Windows: double-click these
+├── install.command / start.command / run_once.command  # macOS: double-click these
+├── MAC-打不开就读我.txt                          # macOS: what to do if they won't open
+├── scripts/
+│   ├── common.sh                  # shared shell helpers for the .command scripts
+│   └── check_encoding.py          # guard against the line-ending / encoding class of bugs
+├── .github/workflows/check.yml    # free macOS + Windows CI on every push
 ├── config.example.yaml            # config template (copy → config.yaml)
 ├── data/profiles/profile.example.yaml  # profile template (copy → profile.yaml)
 ├── src/hk_job_radar/
@@ -221,8 +257,14 @@ hk_job_radar/
 │   ├── notify/                    # Telegram report + client
 │   ├── pipeline.py / scheduler.py
 │   └── config.py / db.py / models.py
+├── docs/                          # beginner guides (Windows + macOS)
 └── tests/                         # unit tests (pure, no network)
 ```
+
+> **Why the CI runs on macOS**: the author develops on Windows, so a real macOS
+> runner is the only honest way to verify the Mac path. Every push installs the
+> project, downloads Chromium, runs `stats`, and checks the launchd job — see
+> [`.github/workflows/check.yml`](.github/workflows/check.yml).
 
 ### License
 
@@ -270,9 +312,11 @@ hk_job_radar/
 ### 局限
 
 - 有一定技术门槛——不过「一键安装脚本」已省去大部分；仍需自备 DeepSeek key 和 Telegram 机器人
+  （Windows 双击 `install.bat`，macOS 双击 `install.command`，流程一样）
 - 依赖第三方站点，抓取可能被限流或临时封锁（LinkedIn/Indeed 需登录过盾）
 - 不保证 100% 覆盖——它是「雷达」，不是「全量抓取」
 - LLM 打分是相关度参考，不是录用决定
+- 目前推送渠道只有 Telegram（**内地网络无法直接访问**）；微信 / 邮件推送在规划中
 
 ### 快速上手
 
@@ -292,6 +336,27 @@ hk_job_radar/
 > 第 4、5 步是安装脚本**唯一帮不了你**的两件事：**你想找什么**、**你是谁**。
 > 跳过它们，程序照样会跑，但会抓错岗位、再拿一份空画像去打分。
 > 每一步点哪里，见[保姆级新手教程](docs/getting-started-zh.md)。
+
+**方式 A2 —— Mac 一键安装，同样不用敲命令**
+
+流程完全一样，只是文件后缀从 `.bat` 换成 `.command`：
+
+1. 安装 [Mac 版 Python 3.10+](https://www.python.org/downloads/macos/)
+   （Mac 自带的那个太旧，不够用）
+2. **Code → Download ZIP**，解压后把文件夹挪到 `/Users/你的名字/` 下
+   （**别放在桌面/文稿/下载里运行**，那三个位置被系统保护，浏览器可能报
+   `Operation not permitted`）
+3. **按住 Control 点 `install.command` →「打开」→ 再点「打开」**
+   （只有第一次需要这样，因为文件是从网上下载的；找不到「打开」按钮就看
+   项目里的 `MAC-打不开就读我.txt`）
+4. 填 `config.yaml` 和 `data/profiles/profile.yaml`——和 Windows 的第 4、5 步一样
+5. 双击一次 `login_jobsdb.command`，然后双击 `run_once.command`（只跑一轮）
+   或 `start.command`（一直挂着）
+
+`install.command` 会顺手注册**每天 09:00 自动运行**（电脑当时在睡觉也会在
+唤醒后补跑）；不想要就双击 `关闭自动运行.command`。
+
+> 每一步点哪里、每个窗口长什么样，见 **[Mac 安装教程](docs/mac-安装教程.md)**。
 
 **方式 B —— 手动安装（终端，只需一次）**
 
