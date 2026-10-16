@@ -185,10 +185,10 @@ class AppConfig:
         default_factory=lambda: {"jobsdb": True, "linkedin": False, "indeed": False}
     )
     keywords: list[str] = field(
-        # 兜底默认值，只在 config.yaml 完全没写 keywords 时生效。
-        # 这里刻意放【通用示例】（与 config.example.yaml 保持一致），
-        # 实际使用请填你自己的求职方向，见 config.example.yaml 顶部的填词四规则。
-        default_factory=lambda: ["business analyst", "product manager"]
+        # 刻意【不预置任何默认词】：关键词是「你想找什么」，只有用户自己知道，
+        # 给个默认值反而会让人以为可以不改就直接用。留空时会由 _validate()
+        # 给出中文提示，引导用户去填自己的岗位名称。
+        default_factory=list
     )
     keyword_synonyms: dict[str, list[str]] = field(default_factory=dict)
     # 毕业生项目关键词（毕业后入职，如银行管培生）：这些岗位在招聘网站上
@@ -196,9 +196,8 @@ class AppConfig:
     # 合法，且投递黄金期就是毕业前一年。因此它们用「全职」类型过滤抓取，
     # 与普通数据岗（用 job_types 实习/兼职过滤）分开处理，避免被误杀。
     graduate_keywords: list[str] = field(
-        default_factory=lambda: ["management trainee", "graduate trainee",
-                                 "graduate programme", "graduate program",
-                                 "management associate"]
+        # 同样不预置：用不用管培生词，取决于用户是不是「毕业前一年」的在读学生。
+        default_factory=list
     )
     # 关键词轮转（P0-2 配套）：初筛是"逐关键词搜索"，每搜索一个关键词就吃 1–2 页
     # 每日配额（配额按香港自然日 0 点重置，不用就作废）。"每轮抓几个关键词"应与
@@ -502,7 +501,11 @@ def load_config(path: Path | None = None) -> AppConfig:
 def _validate(cfg: AppConfig) -> None:
     """防御性校验：把"启动 3 小时后才炸"的配置错误提前到启动瞬间。"""
     if not cfg.keywords:
-        raise ConfigError("keywords 不能为空：请在 config.yaml 中至少配置一个关键词。")
+        raise ConfigError(
+            "keywords 还是空的：请打开 config.yaml，在 keywords: 下面填上你想找的岗位名称"
+            "（英文小写，一行一个，如 \"data analyst\"）。模板刻意不预置默认词——"
+            "「你想找什么」只有你自己知道，照抄别人的词只会抓错岗位。"
+            "填法见 config.example.yaml 里的「填词四条规则」。")
     if not cfg.job_types:
         raise ConfigError(
             f"job_types 不能为空：请在 config.yaml 里设置 career_stage"

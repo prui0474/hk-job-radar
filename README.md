@@ -111,9 +111,8 @@ flowchart LR
   time; LinkedIn & Indeed need a login / Cloudflare pass-through.
 - **Not 100% coverage** — it's a radar, not a guarantee of every posting.
 - **LLM score is an estimate** — a relevance signal, never a hiring decision.
-- **The free tier is capped** — 7 keywords, 1 push channel, 1 digest per day, no
-  instant push. These caps live in readable code and are a product contract, not DRM;
-  the Pro feature set is simply not in this repository.
+- **The free tier is capped** — up to 7 keywords, 1 push channel, 1 digest per day,
+  no instant push. See *Free vs Pro* below for the full comparison.
 
 ### Quick start
 
@@ -124,8 +123,8 @@ flowchart LR
 3. Double-click **`install.bat`** — it sets everything up and asks for your DeepSeek key.
 4. Open `config.yaml` in Notepad → set `notify.channels` to the one channel you want
    (`wecom` / `wxpusher` / `email` / `telegram`) and fill in that channel's block,
-   set `career_stage` (`student` / `graduate` / `both`), **and replace `keywords`
-   with your own target roles** (the template ships with neutral examples).
+   set `career_stage` (`student` / `graduate` / `both`), **and fill in `keywords`
+   with your own target roles** (the template ships it empty on purpose).
 5. Open `data/profiles/profile.yaml` in Notepad → fill in **your own background**
    (this is what the LLM scores jobs against — don't skip it).
 6. Double-click **`login_jobsdb.bat`** once (Cloudflare pass-through).
@@ -274,10 +273,8 @@ crippled, nothing phones home, no account required.
 genuinely useful radar — seven well-chosen keywords cover most Hong Kong
 data / quant / BA searches, and one channel is enough to receive results.
 
-**A note on honesty:** these caps live in readable code in this repository, because
-MIT means you own the code. They are a product contract, not DRM. The Pro feature set
-is kept **out of this repository entirely** — that is the only lock that actually
-works. Build your own if you like; the free tier is not a demo.
+**The free tier stays free.** There is no trial clock and nothing quietly stops
+working after a while — every row marked "included" above is complete and usable as-is.
 
 ### Project structure
 
@@ -364,9 +361,8 @@ Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾*
 - 依赖第三方站点，抓取可能被限流或临时封锁（LinkedIn/Indeed 需登录过盾）
 - 不保证 100% 覆盖——它是「雷达」，不是「全量抓取」
 - LLM 打分是相关度参考，不是录用决定
-- **免费版有额度上限**——7 个关键词、1 个推送通道、每天 1 次日报、不含实时秒推。
-  这些限制写在可读的代码里（`src/hk_job_radar/tier.py`），是产品约定而非加密锁；
-  高级版的功能则**完全不在这份仓库里**。
+- **免费版有额度上限**——最多 7 个关键词、1 个推送通道、每天 1 次日报，不含实时秒推。
+  完整对照见下方「免费版与高级版」一节。
 
 ### 快速上手
 
@@ -378,7 +374,7 @@ Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾*
 4. 用记事本打开 `config.yaml` → 在 `notify.channels` 里写你要用的通道
    （`wecom` / `wxpusher` / `email` / `telegram` 任选一个，四者完全平等）并填好它
    下面的那几行；设好 `career_stage`（`student` / `graduate` / `both`）；
-   **再把 `keywords` 换成你自己要找的岗位**（模板自带的是中性示例词）
+   **再在 `keywords` 下面填上你自己要找的岗位**（模板刻意留空，不预置默认词）
 5. 用记事本打开 `data/profiles/profile.yaml` → 填**你自己的真实背景**
    （这是 AI 打分所依据的画像，别跳过）
 6. 双击一次 **`login_jobsdb.bat`**（过一次防护验证）
@@ -482,10 +478,8 @@ python run.py apply <job_uid>     # 投递副驾（半自动填表）
 以及作者的人工答疑时间）。免费版本身是完整的、真的好用的雷达——7 个选得准的关键词
 足以覆盖香港大多数数据 / 量化 / 商业分析方向的搜索，一个通道也足够收到结果。
 
-**一句实话：** 本仓库是 MIT 协议，所以免费版的额度限制就写在可读的代码里
-（`src/hk_job_radar/tier.py`）——**它是产品约定，不是加密锁**。真正有效的那道锁是：
-**高级版的功能源码根本不在这份仓库里**。想自己动手改，欢迎；不想折腾，高级版就是
-用来省掉这些事的。
+**免费版会一直免费。** 没有试用期倒计时，也不会用着用着悄悄停掉——上面表格里标着
+「免费」的每一项，都是完整可用的。
 
 ### License
 

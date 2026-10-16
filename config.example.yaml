@@ -26,8 +26,7 @@ sources:
 #
 # 💡 免费版额度：关键词【最多 7 个】（普通关键词 + 下面毕业生项目关键词合计）。
 #    写了更多也不会报错，程序会按顺序只用前 7 个，并在日志里提醒你。
-#    7 个通常够用——按"一个方向一个词"来选即可（如 data analyst / data scientist /
-#    business analyst / data engineer / machine learning / quant / management trainee）。
+#    7 个通常够用——按「一个方向一个词」来选即可。
 #
 # 怎么填 —— 四条规则，照着做就不会踩坑：
 #
@@ -46,35 +45,40 @@ sources:
 #      程序取"列表中第一个命中的词"作为命中记录，所以 "data scientist" 必须排在
 #      "data science" 之前，否则记录的关键词会不准确。
 #
-# 下面是【示例】。★请整段删掉，换成你自己的岗位名称★
+# 下面这个列表【留给你自己填】—— 模板刻意不预置任何岗位名称，
+# 因为「你想找什么」只有你自己知道，照抄别人的词只会抓错岗位。
 # 不确定写什么？打开 JobsDB 搜你想要的岗位，把标题里反复出现的词抄下来即可。
-keywords:
-  - "product manager"        # 示例：产品经理
-  - "project manager"        # 示例：项目经理
-  - "business analyst"       # 示例：商业分析师
-  - "marketing executive"    # 示例：市场专员
+#
+# 填法举例（把 "# " 去掉，再换成你自己的词）：
+# keywords:
+#   - "data analyst"
+#   - "business analyst"
+keywords: []
 
 # ---- 毕业生项目关键词（可选，面向"毕业前一年"的在读学生）----
 # 有些岗位（银行管培生 Management Trainee、毕业生培训计划等）在招聘网站上是
 # full-time，但【入职时间在毕业之后】。如果你还在读，这类岗位正是应该提前一年投的
 # 高价值目标，所以单独放一个列表：系统会用「全职」类型的 URL 过滤去抓它们，
 # 与上面的普通关键词（用 job_types 的实习/兼职过滤）分开，避免被当成"违法全职"误杀。
-# 不需要（已毕业 / 不想投管培生）→ 把下面的词删掉即可。
-graduate_keywords:
-  - "management trainee"
-  - "graduate trainee"
-  - "graduate programme"
-  - "graduate program"
-  - "management associate"
+# 不需要（已毕业 / 不想投管培生）→ 留空即可。
+#
+# 提醒：这里的词同样计入免费版「最多 7 个」的额度。
+#
+# 填法举例：
+# graduate_keywords:
+#   - "management trainee"
+#   - "graduate programme"
+graduate_keywords: []
 
 # 关键词同义词映射（可选）：value 里的词命中后，归入 key 所代表的主关键词。
-# 用途举例：你写了 "product manager"，但有些岗位标题写的是 "product owner"，
-#          把后者填进同义词，它就会被算作命中 "product manager"。
+# 用途举例：你写了 "data analyst"，但有些岗位标题写的是 "data analytics"，
+#          把后者填进同义词，它就会被算作命中 "data analyst"。
 # 规则：主关键词必须出现在上面的 keywords 列表里，否则它的同义词不会生效。
 # 注意：同义词同样是子串匹配，所以同样只放岗位名称，不放技能名词。
-keyword_synonyms:
-  "product manager": ["product owner"]
-  "marketing executive": ["marketing associate"]
+# 填法举例：
+# keyword_synonyms:
+#   "data analyst": ["data analytics"]
+keyword_synonyms: {}
 
 # ---- 求职阶段（决定抓哪些岗位类型，★必填★）----
 #   student  → 在读学生：只抓「实习 / 兼职」

@@ -309,15 +309,16 @@ telegram:
 
 **第二处：求职关键词（必须改）**
 
-找到 `keywords:` 那一段。模板里放的是一组**通用示例**，不是给你用的，
-必须换成你自己想找的岗位名称。
+找到 `keywords:` 那一段。模板里它是**空的**（`keywords: []`），
+刻意不预置任何示例——必须换成你自己想找的岗位名称。
 
 ```yaml
 keywords:
-  - data analyst          ← 改成你要找的岗位
+  - data analyst          ← 按你自己想找的方向写，示例仅作格式参考
   - business analyst
-  - product manager
 ```
+
+现在模板里是 `keywords: []`，把它整行替换成上面的形式即可。
 
 写得越具体越准。比如你是学金融的，可以写：
 `financial analyst`、`risk analyst`、`investment analyst`。
