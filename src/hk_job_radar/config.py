@@ -407,11 +407,17 @@ def _parse_notify(raw: dict) -> NotifyConfig:
     return nc
 
 
-def load_config(path: Path | None = None) -> AppConfig:
+def load_config(path: Path | None = None, *, require_runnable: bool = True) -> AppConfig:
     """读取 config.yaml → AppConfig。
 
     文件不存在时不抛异常：返回默认配置并打 WARNING（stats 等只读命令
     仍可用）；真正需要凭据的 run/report/once 由 require_notify() 把关。
+
+    require_runnable：是否要求配置「足以真正开始抓取」。
+    - 抓取类命令（run / once / report / notify test）用默认的 True，
+      缺关键词、缺岗位类型时立刻给出中文报错，避免跑到一半才炸。
+    - 只读类命令（stats）传 False：它只读数据库、顺带打印每日上限，
+      不该因为用户还没填关键词就打不开。
     """
     cfg_path = path or CONFIG_PATH
     if not cfg_path.exists():
@@ -489,7 +495,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     cfg.report_time = str(raw.get("report_time", cfg.report_time)).strip()
     cfg.report_times = [str(t).strip() for t in (raw.get("report_times") or []) if str(t).strip()]
 
-    _validate(cfg)
+    _validate(cfg, require_runnable=require_runnable)
 
     # 免费版额度裁剪（延迟导入：tier 需要 config 的 PROJECT_ROOT，模块级导入会成环）
     from hk_job_radar import tier
@@ -498,15 +504,19 @@ def load_config(path: Path | None = None) -> AppConfig:
     return cfg
 
 
-def _validate(cfg: AppConfig) -> None:
-    """防御性校验：把"启动 3 小时后才炸"的配置错误提前到启动瞬间。"""
-    if not cfg.keywords:
+def _validate(cfg: AppConfig, *, require_runnable: bool = True) -> None:
+    """防御性校验：把"启动 3 小时后才炸"的配置错误提前到启动瞬间。
+
+    require_runnable=False 时只做「格式类」校验，跳过「能不能开始抓取」类校验
+    （关键词是否填了、岗位类型是否有），供 stats 这类只读命令使用。
+    """
+    if require_runnable and not cfg.keywords:
         raise ConfigError(
             "keywords 还是空的：请打开 config.yaml，在 keywords: 下面填上你想找的岗位名称"
             "（英文小写，一行一个，如 \"data analyst\"）。模板刻意不预置默认词——"
             "「你想找什么」只有你自己知道，照抄别人的词只会抓错岗位。"
             "填法见 config.example.yaml 里的「填词四条规则」。")
-    if not cfg.job_types:
+    if require_runnable and not cfg.job_types:
         raise ConfigError(
             f"job_types 不能为空：请在 config.yaml 里设置 career_stage"
             f"（student = 实习/兼职、graduate = 全职、both = 都要），"

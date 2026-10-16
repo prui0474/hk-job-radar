@@ -124,8 +124,12 @@ def cmd_notify_test(args: argparse.Namespace) -> int:
 
 
 def cmd_stats(args: argparse.Namespace) -> int:
-    """`hk_radar stats`：打印今日运行状态（P0-8）。只读命令，不需要任何凭据。"""
-    config = load_config()   # 仅用于校验提示；统计本身只依赖数据库
+    """`hk_radar stats`：打印今日运行状态（P0-8）。只读命令，不需要任何凭据。
+
+    刻意传 require_runnable=False：stats 只读数据库、顺带显示每日上限，
+    即使用户还没填关键词也应该能打开；填词的事留给抓取类命令去拦。
+    """
+    config = load_config(require_runnable=False)
     db = Database(str(_db_path()))
     s = db.get_stats()
 
@@ -146,6 +150,10 @@ def cmd_stats(args: argparse.Namespace) -> int:
     if s["events_today"]:
         events = "、".join(f"{k} ×{v}" for k, v in s["events_today"].items())
         print(f"  今日运行事件          {events}")
+    if not config.keywords:
+        print("─" * 44)
+        print("提示：config.yaml 里的 keywords 还没填，程序暂时抓不到岗位。")
+        print("      填上你想找的岗位名称后即可开始（见 README 快速上手第 4 步）。")
     return 0
 
 
