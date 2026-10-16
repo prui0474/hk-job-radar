@@ -67,6 +67,22 @@ radar_ok "找到 Python：$PY3"
 echo
 if [ -x "$RADAR_ROOT/.venv/bin/python" ]; then
     echo "[2/5] 虚拟环境已存在，跳过"
+elif [ -x "$RADAR_ROOT/.venv/Scripts/python.exe" ]; then
+    # 这个 .venv 是在 Windows 上建的（Mac 的虚拟环境结构完全不同：bin/ 而不是 Scripts/）。
+    # 有人可能是把整个项目文件夹从 Windows 拷到 Mac 才遇到这种情况。此时直接
+    # 重建会得到一个"半 Windows 半 Mac"的坏环境，报错还特别难懂，所以宁可停下来
+    # 说清楚该怎么办，也不要硬着头皮往下跑。
+    radar_err "检测到项目里的 .venv 是在 Windows 上创建的，Mac 上没法用。"
+    echo
+    echo "  请这样做："
+    echo "   1. 在「访达」里打开本项目文件夹"
+    echo "   2. 找到 .venv 这个文件夹，把它拖进废纸篓"
+    echo "      （它是虚拟环境，删掉不会丢任何数据，重跑本文件会自动重建）"
+    echo "   3. 重新双击 install.command"
+    echo
+    echo "  看不到 .venv？按 Command + Shift + .（句号）显示隐藏文件。"
+    radar_pause
+    exit 1
 else
     echo "[2/5] 正在创建虚拟环境（约 10 秒）..."
     "$PY3" -m venv "$RADAR_ROOT/.venv"
