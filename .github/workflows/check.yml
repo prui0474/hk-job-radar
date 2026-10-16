@@ -103,6 +103,26 @@ jobs:
             *) echo "[FAIL] 解释器路径不是 Mac 形态"; exit 1 ;;
           esac
 
+      - name: 双击入口脚本能真正跑起来（一直走到凭据门禁为止）
+        run: |
+          # 这一步就是模拟"用户双击"：直接执行 .command 文件本身。
+          # CI 里没有填 Telegram token，所以它们会停在配置门禁并打印中文提示
+          # ——正好用来验证「双击 → 能跑 → 报错可读」这条链路是通的。
+          # 不测 login_*.command：那两个会真的启动浏览器。
+          for f in ./start.command ./run_once.command ./report_now.command; do
+            echo "=== $f ==="
+            out="$("$f" 2>&1)" || true
+            echo "$out" | head -6
+            if echo "$out" | grep -qE "command not found|syntax error|No such file"; then
+              echo "[FAIL] $f 出现脚本层错误"; exit 1
+            fi
+            if echo "$out" | grep -q "配置错误"; then
+              echo "[OK]   $f 跑通并停在预期的中文配置门禁"
+            else
+              echo "[FAIL] $f 没有走到预期的配置门禁"; exit 1
+            fi
+          done
+
       - name: launchd 定时任务生成 + plutil 校验
         run: |
           set -u
@@ -191,6 +211,34 @@ jobs:
           import playwright, yaml, openai, loguru, apscheduler, requests, tenacity
           print('关键依赖全部可导入')
           "
+
+      - name: 非 UTF-8 模式下的 pip 解码回归（复现历史 GBK 崩溃的那层代码）
+        shell: bash
+        run: |
+          # 注意：本工作流在 job 级设了 PYTHONUTF8=1，那会让 Python 走 UTF-8 模式，
+          # 反而"掩盖"了当年用户遇到的那个 bug。所以这一步特意把它去掉，
+          # 让 Python 回落到系统首选编码，再走一遍 pip 解析 requirements.txt 的
+          # 真实代码路径（pip/_internal/req/req_file.py → auto_decode）。
+          echo "关闭 PYTHONUTF8 后，Python 实际使用的首选编码："
+          env -u PYTHONUTF8 ./.venv/Scripts/python.exe -c "
+          import locale, sys
+          print('  preferred =', locale.getpreferredencoding(False), '| utf8_mode =', sys.flags.utf8_mode)
+          "
+          echo "--- 用 pip 真实解析 requirements.txt ---"
+          set +e
+          env -u PYTHONUTF8 ./.venv/Scripts/python.exe -m pip install --dry-run \
+              --disable-pip-version-check -r requirements.txt > /tmp/pip_probe.txt 2>&1
+          code=$?
+          set -e
+          head -12 /tmp/pip_probe.txt
+          if grep -q "UnicodeDecodeError" /tmp/pip_probe.txt; then
+            echo "[FAIL] pip 仍然解码失败 —— requirements.txt 首行的编码声明可能被删掉了"
+            exit 1
+          fi
+          if [ "$code" -ne 0 ]; then
+            echo "[FAIL] pip 退出码 $code"; exit 1
+          fi
+          echo "[OK] 非 UTF-8 模式下 pip 也能正常解析 requirements.txt"
 
       - name: stats 命令可用（不需要凭据）
         shell: bash
