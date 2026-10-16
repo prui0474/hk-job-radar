@@ -201,6 +201,7 @@ python run.py login indeed
 python run.py once             # run ONE sweep, push the digest, then exit (or double-click run_once.bat)
 python run.py run              # keep monitoring in the foreground (or double-click start.bat)
 python run.py report now       # send today's digest immediately
+python run.py notify test      # send a test message to your push channel(s) — verify setup in 10s
 python run.py stats            # today's fetch/new/push counts
 python run.py apply <job_uid>  # semi-auto application assistant
 ```
@@ -441,6 +442,7 @@ python run.py login indeed
 python run.py once                # 只抓一轮就退出并推日报（或直接双击 run_once.bat）
 python run.py run                 # 启动监控（或直接双击 start.bat）
 python run.py report now          # 立刻补发一次日报
+python run.py notify test         # 给推送通道发一条测试消息（配完通道后先点这个，10 秒验证）
 python run.py stats               # 查看今日抓取/推送统计
 python run.py apply <job_uid>     # 投递副驾（半自动填表）
 ```

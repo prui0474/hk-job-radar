@@ -81,6 +81,48 @@ def cmd_once(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_notify_test(args: argparse.Namespace) -> int:
+    """`hk_radar notify test`：给已启用的推送通道发一条测试消息。
+
+    为什么必须有这个命令：推送是唯一输出口，配错了等于「程序一直在跑、
+    但你永远收不到东西」。等 09:00 的日报来验证太慢，所以给一个 5 秒的验证入口
+    ——配好通道后立刻双击一次，收到消息就说明通了。
+    """
+    config = load_config()
+    require_notify(config)          # 没配好的话这里就给中文提示并退出
+    from hk_job_radar.notify.dispatch import Notifier
+
+    db = Database(str(_db_path()))
+    notifier = Notifier.from_config(config, db)
+
+    print(f"正在向 {len(notifier.channels)} 个通道发送测试消息："
+          f"{'、'.join(notifier.labels)}")
+    message = (
+        "✅ 香港岗位雷达 · 测试消息\n"
+        + "━" * 18 + "\n"
+        "看到这条说明推送通道配置成功。\n"
+        "以后每天会以同样的方式把岗位日报发到这里。"
+    )
+    results = notifier.send_text(message)
+
+    ok = [name for name, good in results.items() if good]
+    bad = [name for name, good in results.items() if not good]
+    for name in ok:
+        print(f"  ✅ {tier.channel_label(name)}：发送成功，去你的收件端看一眼")
+    for name in bad:
+        print(f"  ❌ {tier.channel_label(name)}：发送失败（原因见 data/logs/ 下的日志）")
+
+    print("─" * 52)
+    if not ok:
+        print("提示：最常见的原因是凭据复制不完整、或填错了位置。")
+        print("      可对照 docs/推送渠道对比.md 里的「收不到消息？」一节逐条检查。")
+        return 1
+    if bad:
+        print("部分通道失败，但至少有一个通了——不影响日常使用。")
+    print("✅ 测试完成。收得到消息就说明配置没问题，可以开始用了。")
+    return 0
+
+
 def cmd_stats(args: argparse.Namespace) -> int:
     """`hk_radar stats`：打印今日运行状态（P0-8）。只读命令，不需要任何凭据。"""
     config = load_config()   # 仅用于校验提示；统计本身只依赖数据库
@@ -337,6 +379,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_stats = sub.add_parser("stats", help="查看今日抓取量/新岗位数/推送数")
     p_stats.set_defaults(func=cmd_stats)
+
+    p_notify = sub.add_parser("notify", help="推送通道相关操作")
+    notify_sub = p_notify.add_subparsers(dest="notify_action", required=True)
+    p_notify_test = notify_sub.add_parser(
+        "test", help="给已启用的通道发一条测试消息（5 秒验证配置是否正确）")
+    p_notify_test.set_defaults(func=cmd_notify_test)
 
     p_apply = sub.add_parser("apply", help="投递副驾（T05 交付）")
     p_apply.add_argument("job_id", help="岗位 ID（job_uid，如 jobsdb:12345678）")
