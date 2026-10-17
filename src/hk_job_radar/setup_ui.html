@@ -1,0 +1,787 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>香港岗位雷达 · 配置向导</title>
+<style>
+  :root{
+    --bg:#f4f6f9; --card:#ffffff; --ink:#1f2328; --muted:#6b7280;
+    --line:#e3e7ee; --accent:#2563eb; --accent-soft:#eff4ff;
+    --ok:#15803d; --ok-soft:#ecfdf3; --warn:#b45309; --warn-soft:#fff8eb;
+    --err:#c0392b; --err-soft:#fdf0ee;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; padding:0 0 60px; background:var(--bg); color:var(--ink);
+    font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
+         "Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  }
+  header{
+    background:var(--card); border-bottom:1px solid var(--line);
+    padding:26px 20px 22px;
+  }
+  .wrap{max-width:840px; margin:0 auto}
+  header h1{margin:0 0 6px; font-size:21px; letter-spacing:.2px}
+  header p{margin:0; color:var(--muted); font-size:13.5px}
+  .pill{
+    display:inline-block; margin-left:8px; padding:1px 9px; border-radius:20px;
+    background:var(--accent-soft); color:var(--accent); font-size:12px;
+    vertical-align:2px;
+  }
+  main{max-width:840px; margin:0 auto; padding:22px 20px 0}
+  section{
+    background:var(--card); border:1px solid var(--line); border-radius:12px;
+    padding:22px 24px; margin-bottom:16px;
+  }
+  section > h2{
+    margin:0 0 4px; font-size:16.5px; display:flex; align-items:center; gap:9px;
+  }
+  .num{
+    width:23px; height:23px; border-radius:50%; background:var(--accent);
+    color:#fff; font-size:13px; display:flex; align-items:center;
+    justify-content:center; flex:0 0 auto; font-weight:600;
+  }
+  .lead{margin:0 0 16px; color:var(--muted); font-size:13.5px}
+  label.field{display:block; margin:0 0 6px; font-size:13.5px; font-weight:600}
+  .hint{color:var(--muted); font-size:12.5px; margin:5px 0 0; line-height:1.6}
+  .hint.sample{
+    color:var(--warn); background:var(--warn-soft); border:1px solid #f3e0bd;
+    border-radius:8px; padding:8px 11px; margin:9px 0 0;
+  }
+  textarea, input[type=text], input[type=password], input[type=number], input[type=time]{
+    width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:8px;
+    font:inherit; font-size:14px; color:var(--ink); background:#fff; outline:none;
+    transition:border-color .15s, box-shadow .15s;
+  }
+  textarea:focus, input:focus{
+    border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);
+  }
+  textarea{resize:vertical; min-height:88px; line-height:1.65}
+  textarea.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+                font-size:13.5px}
+  .row{display:grid; grid-template-columns:1fr 1fr; gap:14px}
+  .row-3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px}
+  .stack > * + *{margin-top:14px}
+  .counter{font-size:12.5px; color:var(--muted); margin-top:6px}
+  .counter b{color:var(--accent); font-weight:600}
+  .counter.over b{color:var(--warn)}
+
+  /* 三选一的求职阶段 */
+  .choice{display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-top:8px}
+  .choice button{
+    text-align:left; padding:12px 14px; border:1px solid var(--line);
+    border-radius:9px; background:#fff; cursor:pointer; font:inherit;
+    transition:all .15s;
+  }
+  .choice button:hover{border-color:#c3cfdd}
+  .choice button.on{
+    border-color:var(--accent); background:var(--accent-soft);
+    box-shadow:inset 0 0 0 1px var(--accent);
+  }
+  .choice b{display:block; font-size:14px; margin-bottom:2px}
+  .choice span{display:block; color:var(--muted); font-size:12.5px; line-height:1.5}
+
+  /* 站点开关 */
+  .switch-row{display:flex; flex-wrap:wrap; gap:10px; margin-top:8px}
+  .switch{
+    display:flex; align-items:center; gap:8px; padding:9px 15px;
+    border:1px solid var(--line); border-radius:9px; cursor:pointer;
+    font-size:13.5px; background:#fff; user-select:none;
+  }
+  .switch.on{border-color:var(--accent); background:var(--accent-soft)}
+  .switch input{accent-color:var(--accent); margin:0}
+
+  /* 通道卡片 */
+  .channels{display:grid; grid-template-columns:repeat(4,1fr); gap:10px}
+  .ch{
+    padding:13px 12px; border:1px solid var(--line); border-radius:9px;
+    background:#fff; cursor:pointer; text-align:center; transition:all .15s;
+  }
+  .ch:hover{border-color:#c3cfdd}
+  .ch.on{border-color:var(--accent); background:var(--accent-soft);
+         box-shadow:inset 0 0 0 1px var(--accent)}
+  .ch b{display:block; font-size:13.5px; margin-bottom:3px}
+  .ch span{display:block; font-size:11.5px; color:var(--muted); line-height:1.45}
+  .ch .badge{
+    display:inline-block; margin-top:6px; font-size:11px; color:var(--ok);
+    background:var(--ok-soft); border-radius:10px; padding:1px 7px;
+  }
+  .panel{display:none; margin-top:16px; padding:16px; border-radius:9px;
+         background:#fafbfd; border:1px dashed var(--line)}
+  .panel.on{display:block}
+  .panel .stack > * + *{margin-top:12px}
+
+  /* 底部动作 */
+  .actions{
+    max-width:840px; margin:0 auto; padding:0 20px; display:flex; gap:10px;
+    align-items:center; flex-wrap:wrap;
+  }
+  .btn{
+    padding:11px 22px; border-radius:9px; border:1px solid var(--line);
+    background:#fff; color:var(--ink); font:inherit; font-size:14.5px;
+    cursor:pointer; transition:all .15s;
+  }
+  .btn:hover{border-color:#c3cfdd; background:#fafbfd}
+  .btn.primary{background:var(--accent); border-color:var(--accent); color:#fff}
+  .btn.primary:hover{background:#1d4ed8; border-color:#1d4ed8}
+  .btn:disabled{opacity:.55; cursor:default}
+  .btn-note{color:var(--muted); font-size:12.5px}
+
+  /* 结果区 */
+  #result{max-width:840px; margin:16px auto 0; padding:0 20px}
+  .box{border-radius:10px; padding:15px 17px; margin-bottom:12px; font-size:13.8px;
+       line-height:1.7}
+  .box h3{margin:0 0 7px; font-size:14px}
+  .box ul{margin:6px 0 0; padding-left:20px}
+  .box li{margin:3px 0}
+  .box.ok{background:var(--ok-soft); color:#14532d; border:1px solid #c9ecd5}
+  .box.warn{background:var(--warn-soft); color:#7c2d12; border:1px solid #f3e0bd}
+  .box.err{background:var(--err-soft); color:#7f1d1d; border:1px solid #f3cfc9}
+  .box.info{background:#f6f8fb; color:#334155; border:1px solid var(--line)}
+  table.diff{width:100%; border-collapse:collapse; margin-top:8px; font-size:13px}
+  table.diff th{text-align:left; color:var(--muted); font-weight:600;
+                padding:5px 8px; border-bottom:1px solid #d9e6dc; font-size:12.5px}
+  table.diff td{padding:5px 8px; border-bottom:1px solid #eaf3ed; vertical-align:top}
+  table.diff td.lbl{width:132px; color:#334155; font-weight:600}
+  table.diff td.before{color:#94a3b8; text-decoration:line-through}
+  table.diff td.after{color:#14532d}
+  pre.doctor{
+    margin:8px 0 0; padding:12px; background:#fff; border:1px solid var(--line);
+    border-radius:8px; font-size:12.5px; line-height:1.75; overflow:auto;
+    white-space:pre-wrap; font-family:ui-monospace,Menlo,Consolas,monospace;
+  }
+  .foot{max-width:840px; margin:24px auto 0; padding:0 20px;
+        color:var(--muted); font-size:12.5px; line-height:1.8}
+  code.inl{background:#eef1f6; padding:1px 5px; border-radius:4px; font-size:12.5px}
+  @media (max-width:720px){
+    .row,.row-3,.choice{grid-template-columns:1fr}
+    .channels{grid-template-columns:1fr 1fr}
+    section{padding:18px 16px}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>香港岗位雷达 · 配置向导<span class="pill" id="tierPill">免费版</span></h1>
+    <p>四项填完，点最下面的「保存配置」。不需要手改 YAML，也不会改错缩进。</p>
+  </div>
+</header>
+
+<main>
+
+  <!-- ① 想找什么 -->
+  <section>
+    <h2><span class="num">1</span>你想找什么岗位</h2>
+    <p class="lead">这些词决定程序去搜什么。搜到的岗位还要过 AI 打分，所以词填得准，报告才有用。</p>
+
+    <div class="stack">
+      <div>
+        <label class="field" for="keywords">岗位关键词（一行一个）</label>
+        <textarea id="keywords" class="mono" spellcheck="false"
+          placeholder="data analyst&#10;business analyst&#10;data scientist"></textarea>
+        <div class="counter" id="kwCounter">已填 <b>0</b> / 7 个</div>
+        <p class="hint sample" id="kwSampleHint" style="display:none">
+          上面这几条是<b>预填的示例</b>，不是你填的。请按你实际想投的岗位改掉——
+          原样留着只会把别人的岗位抓回来。
+        </p>
+        <p class="hint">
+          四条规则：① 用英文小写；② <b>只写岗位名称，别写 python、sql 这类技能词</b>——
+          几乎每份招聘都提这些词，写进去等于没有筛选；③ 别用两三个字母的缩写
+          （ai 会命中 email，ml 会命中 html）；④ 越具体的词越往前放。
+        </p>
+      </div>
+
+      <div>
+        <label class="field" for="graduate_keywords">毕业生项目关键词（可选）</label>
+        <textarea id="graduate_keywords" class="mono" spellcheck="false"
+          placeholder="management trainee&#10;graduate programme"></textarea>
+        <p class="hint">
+          银行管培生、毕业生培训计划这类岗位，入职时间在毕业后，值得毕业前一年就投。
+          填在这里，程序会单独按「全职」去搜它们。不需要就留空。
+        </p>
+      </div>
+
+      <div>
+        <label class="field">你现在的身份（决定抓哪些类型的岗位）</label>
+        <div class="choice" id="stageChoice">
+          <button type="button" data-value="student">
+            <b>在读学生</b><span>只抓实习 / 兼职。学生签证在读期间做全职是违法的。</span>
+          </button>
+          <button type="button" data-value="graduate">
+            <b>已毕业 / IANG</b><span>只抓全职，含管培生与毕业生培训计划。</span>
+          </button>
+          <button type="button" data-value="both">
+            <b>过渡期</b><span>实习、兼职、全职全都要。不确定就先选这个。</span>
+          </button>
+        </div>
+      </div>
+
+      <div>
+        <label class="field">从哪些网站抓</label>
+        <div class="switch-row" id="sourcesRow">
+          <label class="switch" data-name="jobsdb"><input type="checkbox" id="src_jobsdb">JobsDB</label>
+          <label class="switch" data-name="linkedin"><input type="checkbox" id="src_linkedin">LinkedIn</label>
+          <label class="switch" data-name="indeed"><input type="checkbox" id="src_indeed">Indeed</label>
+        </div>
+        <p class="hint">
+          建议先只开 JobsDB，跑顺了再开第二个。LinkedIn 对自动化最敏感，
+          首次使用要先在命令行跑一次 <code class="inl">python run.py login linkedin</code>
+          用求职小号登录，否则会被拦到登录页。
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ② AI 打分 -->
+  <section>
+    <h2><span class="num">2</span>AI 怎么判断岗位值不值得投</h2>
+    <p class="lead">程序把每份岗位描述和下面这段背景一起交给 AI，让它打分。写具体一点，报告就准一点。</p>
+
+    <div class="stack">
+      <div>
+        <label class="field" for="profile_background">你的背景与目标（两三句话即可）</label>
+        <textarea id="profile_background" style="min-height:130px"
+          placeholder="例：香港城市大学数据科学硕士在读，2027 年 6 月毕业。本科信息与计算科学，数学基础扎实。做过一段数据处理实习，用 Power BI 处理过十来万行的对账数据。会 Python、SQL、pandas，正在补时间序列和机器学习。想找数据分析、商业分析方向的实习，金融行业优先，不投偏写代码的软件工程岗。"></textarea>
+        <div class="counter" id="bgCounter">已填 <b>0</b> 字</div>
+      </div>
+
+      <div>
+        <label class="field" for="api_key">DeepSeek API key（选填，但强烈建议填）</label>
+        <input type="password" id="api_key" autocomplete="off" spellcheck="false"
+               placeholder="sk-...">
+        <p class="hint" id="apiKeyHint">
+          填了会存进本文件夹的 <code class="inl">api_key.txt</code>（不会写进 config.yaml）。
+          没有的话去 platform.deepseek.com 注册，左侧「API Keys」→ 创建，复制 sk- 开头那串。
+          不填也能跑，但岗位不会被打分，日报里全是原始标题。
+        </p>
+      </div>
+
+      <div class="row">
+        <div>
+          <label class="field" for="score_threshold">及格线</label>
+          <input type="number" id="score_threshold" min="0" max="100" step="5" value="60">
+          <p class="hint">低于这个分数的岗位不进日报。60 是个稳妥的起点。</p>
+        </div>
+        <div>
+          <label class="field" for="realtime_threshold">高分线</label>
+          <input type="number" id="realtime_threshold" min="0" max="100" step="5" value="80">
+          <p class="hint">达到这个分数的新岗位会立刻单独推给你，不等日报。不能低于及格线。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ③ 推送通道 -->
+  <section>
+    <h2><span class="num">3</span>消息发到哪里</h2>
+    <p class="lead">四个通道完全平等，选一个填就行。没有哪个更「官方」，选你手上最方便的那个。</p>
+
+    <div class="channels" id="channelRow">
+      <button type="button" class="ch" data-name="wecom">
+        <b>企业微信</b><span>腾讯官方、免费、无条数上限</span>
+      </button>
+      <button type="button" class="ch" data-name="email">
+        <b>邮件</b><span>最通用，能发排好版的岗位卡片</span>
+      </button>
+      <button type="button" class="ch" data-name="telegram">
+        <b>Telegram</b><span>唯一带「感兴趣 / 不感兴趣」按钮</span>
+      </button>
+      <button type="button" class="ch" data-name="wxpusher">
+        <b>WxPusher</b><span>扫码即用，第三方服务</span>
+      </button>
+    </div>
+
+    <!-- 企业微信 -->
+    <div class="panel" data-panel="wecom">
+      <div class="stack">
+        <div>
+          <label class="field" for="wecom_webhook">群机器人 Webhook 地址</label>
+          <input type="text" id="wecom_webhook" autocomplete="off" spellcheck="false"
+                 placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...">
+          <p class="hint">
+            手机装「企业微信」→ 注册（企业名称随便填）→ 建一个只有自己的群 →
+            群设置 → 群机器人 → 添加 → 复制 Webhook 地址，整条粘进来。
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 邮件 -->
+    <div class="panel" data-panel="email">
+      <div class="stack">
+        <div class="row">
+          <div>
+            <label class="field" for="email_smtp_host">邮件服务器</label>
+            <input type="text" id="email_smtp_host" placeholder="smtp.qq.com" spellcheck="false">
+          </div>
+          <div>
+            <label class="field" for="email_smtp_port">端口</label>
+            <input type="number" id="email_smtp_port" value="465">
+          </div>
+        </div>
+        <p class="hint">QQ 邮箱填 <code class="inl">smtp.qq.com</code>，163 填
+          <code class="inl">smtp.163.com</code>，Gmail 填 <code class="inl">smtp.gmail.com</code>；端口 465 走 SSL。</p>
+        <div>
+          <label class="field" for="email_user">发件邮箱</label>
+          <input type="text" id="email_user" placeholder="you@qq.com" spellcheck="false">
+        </div>
+        <div>
+          <label class="field" for="email_auth_code">邮箱授权码</label>
+          <input type="password" id="email_auth_code" autocomplete="off" spellcheck="false">
+          <p class="hint">
+            注意：这是邮箱后台生成的<b>授权码</b>，不是你登录邮箱的密码。
+            QQ 邮箱：设置 → 账户 → 开启 SMTP 服务 → 生成授权码。
+          </p>
+        </div>
+        <div>
+          <label class="field" for="email_to">收件邮箱</label>
+          <input type="text" id="email_to" placeholder="you@qq.com" spellcheck="false">
+          <p class="hint">可以和发件邮箱相同；多个地址用逗号隔开。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Telegram -->
+    <div class="panel" data-panel="telegram">
+      <div class="stack">
+        <div>
+          <label class="field" for="telegram_bot_token">机器人 token</label>
+          <input type="password" id="telegram_bot_token" autocomplete="off" spellcheck="false"
+                 placeholder="1234567890:AA...">
+          <p class="hint">
+            在 Telegram 里找 <code class="inl">@BotFather</code>，发 <code class="inl">/newbot</code>，
+            按提示起名字，它会回一串「数字:字母」形式的 token，整串复制。
+          </p>
+        </div>
+        <div>
+          <label class="field" for="telegram_chat_id">chat_id</label>
+          <input type="text" id="telegram_chat_id" placeholder="1234567891" spellcheck="false">
+          <p class="hint">
+            先给你的机器人随便发一条消息，然后浏览器打开
+            <code class="inl">https://api.telegram.org/bot&lt;你的token&gt;/getUpdates</code>，
+            搜索 <code class="inl">"chat"</code>，旁边的 <code class="inl">"id"</code> 就是。
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- WxPusher -->
+    <div class="panel" data-panel="wxpusher">
+      <div class="stack">
+        <div>
+          <label class="field" for="wxpusher_app_token">appToken</label>
+          <input type="password" id="wxpusher_app_token" autocomplete="off" spellcheck="false"
+                 placeholder="AT_...">
+          <p class="hint">
+            wxpusher.zjiecode.com → 微信扫码登录 → 创建应用 → 复制 appToken。
+          </p>
+        </div>
+        <div>
+          <label class="field" for="wxpusher_uids">你的 UID</label>
+          <input type="text" id="wxpusher_uids" placeholder="UID_xxxxxx" spellcheck="false">
+          <p class="hint">在该网站的「用户管理」里复制；多个用逗号隔开。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ④ 日报时间 -->
+  <section>
+    <h2><span class="num">4</span>每天几点收日报</h2>
+    <p class="lead">到了这个时间，程序把当天所有达标岗位合成一份推给你。电脑得开着才会发。</p>
+    <div class="row">
+      <div>
+        <label class="field" for="report_time">日报时间（香港时间）</label>
+        <input type="time" id="report_time" value="09:00">
+        <p class="hint">早上 9 点是个好选择：起床就能看到昨晚新增的岗位。</p>
+      </div>
+      <div>
+        <label class="field">&nbsp;</label>
+        <button type="button" class="btn" id="btnDoctor">先做一次体检</button>
+        <p class="hint">检查 Python、依赖、浏览器、配置有没有问题，不写入任何文件。</p>
+      </div>
+    </div>
+
+    <div style="border-top:1px solid var(--line); margin-top:18px; padding-top:16px">
+      <label class="field">浏览器要不要走代理</label>
+      <p class="hint" style="margin:0">
+        只在两种情况下需要动这里：<b>安全验证一直转圈</b>，或者直连香港网站很慢。
+        其它情况留「不用」。
+      </p>
+      <div class="choice" id="proxyChoice">
+        <button type="button" data-value="">
+          <b>不用</b><span>直连。多数香港网络，以及代理开着 TUN 模式时选这个。</span>
+        </button>
+        <button type="button" data-value="system">
+          <b>跟随系统</b><span>代理软件用的是「系统代理模式」时选这个。</span>
+        </button>
+        <button type="button" data-value="custom">
+          <b>指定地址</b><span>手填，比如 http://127.0.0.1:7890。</span>
+        </button>
+      </div>
+      <div id="proxyCustomWrap" style="display:none; margin-top:10px">
+        <input type="text" id="browser_proxy_custom" spellcheck="false"
+               placeholder="http://127.0.0.1:7890">
+        <p class="hint">端口号在你代理软件的主界面上能看到，常见的是 7890、10809 之类。</p>
+      </div>
+      <p class="hint" style="margin-top:8px">
+        拿不准就先点上面的「先做一次体检」，看第 5 项「网络出口」怎么说。
+      </p>
+    </div>
+  </section>
+</main>
+
+<div class="actions">
+  <button type="button" class="btn primary" id="btnSave">保存配置</button>
+  <button type="button" class="btn" id="btnQuit">关闭向导</button>
+  <span class="btn-note" id="saveNote">保存前会自动备份现有的 config.yaml。</span>
+</div>
+
+<div id="result"></div>
+
+<div class="foot">
+  保存成功后：点「关闭向导」，然后双击 <code class="inl">start.bat</code>
+  （Mac 上是 <code class="inl">start.command</code>）。
+  以后想改配置，随时再双击 <code class="inl">setup.bat</code> 就行。
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOKEN = "__WIZARD_TOKEN__";
+  var state = {};
+  var stage = "student";
+  var channel = "";
+  var proxyMode = "";        // "" 直连 / "system" 跟随系统 / "custom" 自填地址
+
+  function $(id) { return document.getElementById(id); }
+
+  function api(path, body) {
+    return fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Wizard-Token": TOKEN },
+      body: JSON.stringify(body || {})
+    }).then(function (r) { return r.json(); });
+  }
+
+  function lines(text) {
+    return String(text || "").split(/\r?\n/).map(function (s) {
+      return s.trim();
+    }).filter(function (s) { return s.length > 0; });
+  }
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  // ---- 关键词计数 -------------------------------------------------------
+  function refreshCounters() {
+    var n = lines($("keywords").value).length +
+            lines($("graduate_keywords").value).length;
+    var max = state.free_max_keywords || 7;
+    var box = $("kwCounter");
+    box.innerHTML = "已填 <b>" + n + "</b> / " + max + " 个";
+    box.className = "counter" + (n > max ? " over" : "");
+
+    var chars = $("profile_background").value.trim().length;
+    $("bgCounter").innerHTML = "已填 <b>" + chars + "</b> 字";
+  }
+
+  // ---- 求职阶段 ---------------------------------------------------------
+  function setStage(value) {
+    stage = value;
+    Array.prototype.forEach.call(
+      document.querySelectorAll("#stageChoice button"),
+      function (btn) {
+        btn.classList.toggle("on", btn.getAttribute("data-value") === value);
+      }
+    );
+  }
+
+  // ---- 浏览器代理 -------------------------------------------------------
+  function setProxy(value) {
+    // value 可能是 ""、"system"，也可能是一个具体地址（来自已有配置）
+    var isCustom = !!value && value !== "system";
+    proxyMode = isCustom ? "custom" : (value || "");
+    if (isCustom) $("browser_proxy_custom").value = value;
+    $("proxyCustomWrap").style.display = isCustom ? "" : "none";
+    Array.prototype.forEach.call(
+      document.querySelectorAll("#proxyChoice button"),
+      function (btn) {
+        btn.classList.toggle("on", btn.getAttribute("data-value") === proxyMode);
+      }
+    );
+  }
+
+  function proxyValue() {
+    if (proxyMode === "custom") return $("browser_proxy_custom").value.trim();
+    return proxyMode;
+  }
+
+  // ---- 推送通道 ---------------------------------------------------------
+  function setChannel(name) {
+    channel = name;
+    Array.prototype.forEach.call(
+      document.querySelectorAll("#channelRow .ch"),
+      function (btn) {
+        var on = btn.getAttribute("data-name") === name;
+        btn.classList.toggle("on", on);
+        var badge = btn.querySelector(".badge");
+        if (on && state[name + "_filled"]) {
+          if (!badge) {
+            badge = document.createElement("span");
+            badge.className = "badge";
+            btn.appendChild(badge);
+          }
+          badge.textContent = "已配置";
+        } else if (badge) {
+          badge.remove();
+        }
+      }
+    );
+    Array.prototype.forEach.call(
+      document.querySelectorAll(".panel"),
+      function (p) { p.classList.toggle("on", p.getAttribute("data-panel") === name); }
+    );
+  }
+
+  // ---- 已配置的凭据：输入框留空 = 不改 ---------------------------------
+  function markFilled(inputId, filled, labelText) {
+    var el = $(inputId);
+    if (!el) return;
+    el.placeholder = filled ? (labelText + "已配置，留空表示不修改")
+                            : (labelText + "，粘贴到这里");
+  }
+
+  // ---- 收集表单 ---------------------------------------------------------
+  function collect() {
+    return {
+      keywords: $("keywords").value,
+      graduate_keywords: $("graduate_keywords").value,
+      career_stage: stage,
+      sources: {
+        jobsdb: $("src_jobsdb").checked,
+        linkedin: $("src_linkedin").checked,
+        indeed: $("src_indeed").checked
+      },
+      channel: channel,
+      wecom_webhook: $("wecom_webhook").value,
+      email_smtp_host: $("email_smtp_host").value,
+      email_smtp_port: $("email_smtp_port").value,
+      email_user: $("email_user").value,
+      email_auth_code: $("email_auth_code").value,
+      email_to: $("email_to").value,
+      telegram_bot_token: $("telegram_bot_token").value,
+      telegram_chat_id: $("telegram_chat_id").value,
+      wxpusher_app_token: $("wxpusher_app_token").value,
+      wxpusher_uids: $("wxpusher_uids").value,
+      report_time: $("report_time").value,
+      score_threshold: $("score_threshold").value,
+      realtime_threshold: $("realtime_threshold").value,
+      browser_proxy: proxyValue(),
+      profile_background: $("profile_background").value,
+      api_key: $("api_key").value
+    };
+  }
+
+  // ---- 结果渲染 ---------------------------------------------------------
+  function show(html) { $("result").innerHTML = html; }
+
+  function errorBox(errors) {
+    if (!errors || !errors.length) return "";
+    return '<div class="box err"><h3>还没保存，先改这几处</h3><ul>' +
+      errors.map(function (e) { return "<li>" + esc(e.message) + "</li>"; }).join("") +
+      "</ul></div>";
+  }
+
+  function noteBox(notes) {
+    if (!notes || !notes.length) return "";
+    return '<div class="box warn"><h3>可以保存，但这样效果会差一点</h3><ul>' +
+      notes.map(function (e) { return "<li>" + esc(e.message) + "</li>"; }).join("") +
+      "</ul></div>";
+  }
+
+  function diffTable(rows) {
+    if (!rows || !rows.length) return "";
+    var body = rows.map(function (r) {
+      return "<tr><td class='lbl'>" + esc(r.label) + "</td>" +
+             "<td class='before'>" + esc(r.before) + "</td>" +
+             "<td class='after'>" + esc(r.after) + "</td></tr>";
+    }).join("");
+    return "<table class='diff'><tr><th>项目</th><th>改之前</th><th>改之后</th></tr>" +
+           body + "</table>";
+  }
+
+  // ---- 保存 -------------------------------------------------------------
+  function save() {
+    var btn = $("btnSave");
+    btn.disabled = true;
+    btn.textContent = "正在保存…";
+    api("/api/save", collect()).then(function (res) {
+      if (!res.ok) {
+        show(errorBox(res.errors) + noteBox(res.notes));
+        scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
+      var html = '<div class="box ok"><h3>配置已保存</h3>' +
+        "写入的文件：<b>" + res.written.map(esc).join("</b>、<b>") + "</b>" +
+        (res.backup ? "<br>原来的配置已备份为 <code class='inl'>" + esc(res.backup) + "</code>" : "") +
+        "<br>下一步：点「关闭向导」，再双击 <code class='inl'>start.bat</code>。</div>" +
+        noteBox(res.notes);
+      if (res.diff && res.diff.length) {
+        html += '<div class="box info"><h3>这次改了什么</h3>' + diffTable(res.diff) + "</div>";
+      }
+      show(html);
+      scrollTo({ top: 0, behavior: "smooth" });
+    }).catch(function (err) {
+      show('<div class="box err"><h3>保存失败</h3>' + esc(err) +
+           "<br>你的原配置没有被改动。可以把这句话截图保存。</div>");
+    }).then(function () {
+      btn.disabled = false;
+      btn.textContent = "保存配置";
+    });
+  }
+
+  // ---- 体检 -------------------------------------------------------------
+  function runDoctor() {
+    var btn = $("btnDoctor");
+    btn.disabled = true;
+    btn.textContent = "正在检查…";
+    api("/api/doctor", {}).then(function (res) {
+      if (!res.ok) {
+        show('<div class="box err">' + esc(res.error || "检查失败") + "</div>");
+        return;
+      }
+      var checks = res.checks || [];
+      var fails = checks.filter(function (c) { return c.status === "FAIL"; });
+      var head = fails.length
+        ? '<div class="box err"><h3>有 ' + fails.length + ' 项必须修</h3>每一项下面都写了怎么改。</div>'
+        : '<div class="box ok"><h3>没有发现必须修的问题</h3>标 ⚠ 的是建议改，不影响启动。</div>';
+      var body = checks.map(function (c, i) {
+        var icon = { OK: "✅", WARN: "⚠️", FAIL: "❌", SKIP: "⏭️" }[c.status] || "•";
+        var line = icon + " " + (i + 1) + ". " + c.group + " · " + c.name;
+        if (c.detail) line += " —— " + c.detail;
+        if (c.hint) line += "\n      → " + c.hint.replace(/\n/g, "\n        ");
+        return line;
+      }).join("\n");
+      show(head + '<div class="box info"><pre class="doctor">' + esc(body) + "</pre></div>");
+    }).catch(function (err) {
+      show('<div class="box err">检查失败：' + esc(err) + "</div>");
+    }).then(function () {
+      btn.disabled = false;
+      btn.textContent = "先做一次体检";
+    });
+  }
+
+  // ---- 初始化 -----------------------------------------------------------
+  function fill(s) {
+    $("keywords").value = (s.keywords || []).join("\n");
+    $("graduate_keywords").value = (s.graduate_keywords || []).join("\n");
+    // 预填的示例词：提醒一次就够，用户一改动（见下面的 input 监听）就撤掉
+    $("kwSampleHint").style.display = s.keywords_are_samples ? "" : "none";
+    setStage(s.career_stage || "student");
+    $("src_jobsdb").checked = !!(s.sources || {}).jobsdb;
+    $("src_linkedin").checked = !!(s.sources || {}).linkedin;
+    $("src_indeed").checked = !!(s.sources || {}).indeed;
+    setChannel(s.channel || "");
+    setProxy(s.browser_proxy || "");
+
+    $("email_smtp_host").value = s.email_smtp_host || "smtp.qq.com";
+    $("email_smtp_port").value = s.email_smtp_port || 465;
+    $("email_user").value = s.email_user || "";
+    $("email_to").value = s.email_to || "";
+    $("telegram_chat_id").value = s.telegram_chat_id || "";
+    $("wxpusher_uids").value = s.wxpusher_uids || "";
+    $("report_time").value = s.report_time || "09:00";
+    $("score_threshold").value = s.score_threshold || 60;
+    $("realtime_threshold").value = s.realtime_threshold || 80;
+    $("profile_background").value = s.profile_background || "";
+
+    markFilled("wecom_webhook", s.wecom_webhook_filled, "Webhook ");
+    markFilled("email_auth_code", s.email_auth_filled, "授权码");
+    markFilled("telegram_bot_token", s.telegram_token_filled, "token ");
+    markFilled("wxpusher_app_token", s.wxpusher_app_token_filled, "appToken ");
+
+    if (s.has_api_key) {
+      $("api_key").placeholder = "已配置，留空表示不修改";
+    }
+    if (s.is_premium) { $("tierPill").textContent = "高级版"; }
+
+    if (s.load_error) {
+      show('<div class="box warn"><h3>读现有配置时遇到问题</h3>' +
+        "程序已经把这种情况当成「还没配置」来处理，你照常填完保存就行。" +
+        "<pre class='doctor'>" + esc(s.load_error) + "</pre></div>");
+    }
+    refreshCounters();
+  }
+
+  // ---- 事件绑定 ---------------------------------------------------------
+  $("stageChoice").addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-value]");
+    if (btn) setStage(btn.getAttribute("data-value"));
+  });
+  $("channelRow").addEventListener("click", function (e) {
+    var btn = e.target.closest(".ch");
+    if (btn) setChannel(btn.getAttribute("data-name"));
+  });
+  $("proxyChoice").addEventListener("click", function (e) {
+    var btn = e.target.closest("button[data-value]");
+    if (btn) setProxy(btn.getAttribute("data-value"));
+  });
+  $("sourcesRow").addEventListener("change", function (e) {
+    var label = e.target.closest(".switch");
+    if (label) label.classList.toggle("on", e.target.checked);
+  });
+  ["keywords", "graduate_keywords", "profile_background"].forEach(function (id) {
+    $(id).addEventListener("input", refreshCounters);
+  });
+  // 用户一旦动过关键词，说明他已经看懂这是什么，示例提醒就不再占地方
+  $("keywords").addEventListener("input", function () {
+    $("kwSampleHint").style.display = "none";
+  });
+  $("btnSave").addEventListener("click", save);
+  $("btnDoctor").addEventListener("click", runDoctor);
+  $("btnQuit").addEventListener("click", function () {
+    var btn = $("btnQuit");
+    btn.disabled = true;
+    btn.textContent = "正在关闭…";
+    api("/api/quit", {}).then(function () {
+      document.body.innerHTML =
+        '<div style="max-width:640px;margin:80px auto;padding:0 24px;' +
+        'font:16px/1.8 -apple-system,\'PingFang SC\',\'Microsoft YaHei\',sans-serif;' +
+        'color:#1f2328;text-align:center">' +
+        '<h2 style="font-size:19px">向导已关闭</h2>' +
+        "<p>这个页面现在可以关掉了。配置已经保存过的话，" +
+        "回到文件夹双击 <b>start.bat</b>（Mac 上是 <b>start.command</b>）就能开始。</p>" +
+        "<p style='color:#6b7280;font-size:14px'>想再改配置：重新双击 <b>setup.bat</b>。</p></div>";
+    }).catch(function () {
+      btn.disabled = false;
+      btn.textContent = "关闭向导";
+    });
+  });
+
+  // 页面打开时拉一次当前状态，把已有配置填进去
+  fetch("/api/state?t=" + encodeURIComponent(TOKEN), { cache: "no-store" })
+    .then(function (r) { return r.json(); })
+    .then(function (res) {
+      state = (res && res.state) || {};
+      fill(state);
+      Array.prototype.forEach.call(
+        document.querySelectorAll("#sourcesRow .switch"),
+        function (label) {
+          var box = label.querySelector("input");
+          label.classList.toggle("on", box.checked);
+        }
+      );
+    })
+    .catch(function () { refreshCounters(); });
+})();
+</script>
+</body>
+</html>

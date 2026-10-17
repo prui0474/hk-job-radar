@@ -5,6 +5,8 @@
 sys.path 即可运行，对学习者最友好（改完代码立即生效，没有安装/卸载环节）。
 
 用法：
+    python run.py setup            # 打开网页配置向导（第一次装好后从这里开始）
+    python run.py doctor           # 一键自检：15 项体检
     python run.py run              # 启动常驻监控（电脑一直开着时用）
     python run.py once             # 抓一轮就退出并推日报（每天只开机一小会儿时用）
     python run.py report now       # 立即推送今日日报
