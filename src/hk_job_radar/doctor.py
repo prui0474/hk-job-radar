@@ -5,7 +5,7 @@
 Mac 双击打不开、群机器人 webhook 少复制一段、API key 填错了位置……每一种都会让人
 得出「这东西是坏的」的结论。翻文档要时间，问作者要等回复。
 
-doctor 把这些排查经验固化成 14 项体检：一次跑完，用中文说清「哪一项没过、
+doctor 把这些排查经验固化成 15 项体检：一次跑完，用中文说清「哪一项没过、
 为什么、具体怎么修」，最后给一句总结。
 
 设计原则
@@ -17,6 +17,8 @@ doctor 把这些排查经验固化成 14 项体检：一次跑完，用中文说
 from __future__ import annotations
 
 import os
+import re
+import socket
 import sys
 import tempfile
 import time
@@ -187,6 +189,109 @@ def _check_chromium() -> Check:
         return Check(
             "环境", "浏览器内核", FAIL, f"检查失败：{type(exc).__name__}",
             "执行：playwright install chromium。若反复失败，把这条报错发给我。")
+
+
+#: 过盾和人机验证各依赖一个第三方域名。
+#: 关键认知：网站本身打得开，不代表这两个域名打得开 —— 而验证能否走完，
+#: 恰恰取决于它们。
+_NET_PROBES: tuple[tuple[str, str], ...] = (
+    ("Cloudflare 验证组件", "challenges.cloudflare.com"),
+    ("人机验证组件", "www.google.com"),
+)
+
+
+def tcp_probe(host: str, port: int = 443, timeout: float = 2.5) -> bool:
+    """能不能跟这个域名建立 TCP 连接（不做 TLS，只判断通不通）。"""
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _system_proxy() -> str:
+    """读出系统里配的代理地址，没配返回空串。
+
+    只用于诊断：「系统里明明配了代理，但程序默认不走」这件事，用户很难自己想到。
+    """
+    for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy",
+                 "ALL_PROXY", "all_proxy"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    if sys.platform == "win32":
+        try:
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+            ) as key:
+                enabled, _ = winreg.QueryValueEx(key, "ProxyEnable")
+                if not enabled:
+                    return ""
+                server, _ = winreg.QueryValueEx(key, "ProxyServer")
+                return str(server or "").strip()
+        except (OSError, ImportError):
+            return ""
+    if sys.platform == "darwin":
+        try:
+            import subprocess
+
+            out = subprocess.run(["scutil", "--proxy"], capture_output=True,
+                                 text=True, timeout=2).stdout
+        except (OSError, ValueError):
+            return ""
+        host = re.search(r"HTTPSProxy\s*:\s*(\S+)", out)
+        port = re.search(r"HTTPSPort\s*:\s*(\d+)", out)
+        if host:
+            return f"{host.group(1)}:{port.group(1)}" if port else host.group(1)
+    return ""
+
+
+def _check_network(cfg: Optional[AppConfig]) -> Check:
+    """安全验证要用的两个域名通不通 —— 这是「一直转圈」最常见的原因。
+
+    为什么要专门查这一项：用户看到的是「转圈」，真实原因往往是「验证所需的
+    那段脚本根本下载不下来」。前者让人怀疑自己配错了，后者是网络问题，
+    两者的下一步完全不同，靠猜要猜很久。
+    """
+    unreachable = [name for name, host in _NET_PROBES if not tcp_probe(host)]
+    proxy_setting = (cfg.browser_proxy if cfg is not None else "").strip()
+    system_proxy = _system_proxy()
+
+    if not unreachable:
+        if proxy_setting and proxy_setting.lower() != "system":
+            detail = f"验证组件都可达（经 {proxy_setting}）"
+        elif proxy_setting.lower() == "system":
+            detail = "验证组件都可达（跟随系统代理）"
+        else:
+            detail = "验证组件都可达"
+        return Check("环境", "网络出口", OK, detail)
+
+    detail = ("验证组件都连不上" if len(unreachable) == len(_NET_PROBES)
+              else f"{unreachable[0]}连不上")
+
+    if not proxy_setting and system_proxy:
+        hint = (
+            f"系统里配了代理（{system_proxy}），但程序默认直连、不读它。\n"
+            '把 config.yaml 里 browser.proxy 改成 "system" 再跑一次；\n'
+            "不想改文件就双击 setup.bat，在页面里改。")
+    elif proxy_setting.lower() == "system":
+        hint = (
+            "已经设为跟随系统代理，目标仍然不通 —— 多半是代理软件没在运行，\n"
+            "或当前节点连不到这两个域名。先确认代理软件开着，再换个节点试试。")
+    elif proxy_setting:
+        hint = (
+            f"已经指定代理（{proxy_setting}），目标仍然不通。\n"
+            "核对地址和端口是否与代理软件界面上显示的一致，以及软件是否在运行。")
+    else:
+        hint = (
+            "直连不通，系统里也没有代理。你需要一条能访问这两个域名的通道：\n"
+            "开代理软件的 TUN / 虚拟网卡模式（这种模式在网络层接管流量，\n"
+            "程序不需要额外配置），或者换一个网络环境。")
+
+    return Check("环境", "网络出口", WARN, detail, hint)
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +519,7 @@ def _check_browser_dir() -> Check:
 # 汇总
 # ---------------------------------------------------------------------------
 def run_checks(*, llm_test: bool = True) -> list[Check]:
-    """跑完全部 14 项体检，顺序即展示顺序。"""
+    """跑完全部 15 项体检，顺序即展示顺序。"""
     checks: list[Check] = []
 
     checks.append(_check_python())
@@ -423,6 +528,7 @@ def run_checks(*, llm_test: bool = True) -> list[Check]:
     checks.append(_check_chromium())
 
     config_check, cfg = _check_config_file()
+    checks.append(_check_network(cfg))
     checks.append(config_check)
     checks.append(_check_keywords(cfg))
     checks.append(_check_career_stage(cfg))

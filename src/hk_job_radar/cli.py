@@ -168,6 +168,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return run_doctor(llm_test=not args.no_llm)
 
 
+def cmd_setup(args: argparse.Namespace) -> int:
+    """`hk_radar setup`：启动本地网页配置向导。
+
+    这是个「会一直占着窗口」的命令（像 run 一样），关掉窗口或按 Ctrl+C
+    才结束。所以它放在命令行里而不是做成静默后台服务 —— 用户看得见、
+    停得掉，才知道发生了什么。
+    """
+    from hk_job_radar.setup_wizard import run_wizard
+
+    return run_wizard(port=args.port, open_browser=not args.no_browser)
+
+
 def cmd_apply(args: argparse.Namespace) -> int:
     """`hk_radar apply <job_id>`：投递副驾（T05）。
 
@@ -285,7 +297,13 @@ def cmd_login(args: argparse.Namespace) -> int:
         "linkedin": "https://www.linkedin.com/",
         "indeed": "https://hk.indeed.com/",
     }
-    page.goto(entry_urls[source], wait_until="domcontentloaded", timeout=60000)
+    try:
+        page.goto(entry_urls[source], wait_until="domcontentloaded", timeout=60000)
+    except Exception as exc:  # noqa: BLE001 - 打不开是常见情况，给中文提示而不是 traceback
+        print(f"\n⚠️  打开 {source} 时出错：{exc}")
+        print("   通常是网络到不了这个站点。先双击 doctor.bat，看第 5 项「网络出口」。")
+        browser.close()
+        return 1
 
     print("=" * 60)
     print(f"已打开 {source} 浏览器窗口。请在浏览器中完成：")
@@ -294,14 +312,88 @@ def cmd_login(args: argparse.Namespace) -> int:
     print("  3) 确认页面能正常浏览后，回到本窗口按回车。")
     print("（登录态会保存在 data/browser/ 目录，后续抓取自动复用）")
     print("=" * 60)
+
+    # 先给它一点时间自动通过；过不去就立刻说清卡在哪，不让人对着转圈猜。
+    # 这里不等满抓取用的 45 秒 —— 登录模式本来就是让人来操作的。
+    passed = browser.wait_cloudflare(page, timeout_s=_LOGIN_CHALLENGE_WAIT_S,
+                                     quiet=True)
+    if passed:
+        print("✅ 页面正常（没有验证页，或已自动通过）。")
+    else:
+        print()
+        _diagnose_login_failure(source)
+
     try:
-        input("完成后按回车关闭浏览器 > ")
+        input("\n完成后按回车关闭浏览器 > ")
     except (EOFError, KeyboardInterrupt):
         pass
     finally:
+        settled = False
+        try:
+            settled = browser.wait_cloudflare(page, timeout_s=3, quiet=True)
+        except Exception:  # noqa: BLE001 - 页面正在关/跳转时取状态会失败，忽略
+            settled = False
+        try:
+            final_url = (page.url or "").lower()
+        except Exception:  # noqa: BLE001
+            final_url = ""
         browser.close()
-    print("✅ 登录态已持久化。可运行 `python run.py stats` 或 `python run.py run` 开始使用。")
+
+    if source == "linkedin" and any(
+            frag in final_url for frag in ("/login", "/signup", "authwall")):
+        print("\n⚠️  页面还停在 LinkedIn 的登录页 —— 这次没有登录成功。")
+        print("   可以改用搬 cookie 的方式：双击 login_linkedin.bat，选第 2 项。")
+        return 1
+    if not settled:
+        print("\n⚠️  页面看起来还在验证中，这次存下的登录态可能无效。")
+        print("   按上面的提示处理网络后，再双击一次这个脚本。")
+        return 1
+
+    print("\n✅ 登录态已持久化。可运行 `python run.py stats` 或 `python run.py run` 开始使用。")
     return 0
+
+
+#: login 时等待验证页自动通过的时间。比抓取时的 45 秒短：这个模式本来就是
+#: 让人来操作的，过不去应当尽快说清原因，而不是让人干等。
+_LOGIN_CHALLENGE_WAIT_S = 20
+
+#: 各站点「过验证」真正依赖的第三方域名。
+#: 注意：网站首页能打开，不代表这个域名能打开 —— 而验证能否走完全看它。
+_PROBE_REQUIRED = {
+    "jobsdb": ("Cloudflare 验证组件", "challenges.cloudflare.com"),
+    "indeed": ("Cloudflare 验证组件", "challenges.cloudflare.com"),
+    "linkedin": ("人机验证组件", "www.google.com"),
+}
+
+
+def _diagnose_login_failure(source: str) -> None:
+    """验证没过时，替用户分清「网络到不了」还是「浏览器被判定为自动化」。
+
+    这两种情况的下一步完全相反：前者要改网络通道，后者要换出口 IP 或亲手点
+    复选框。而用户在屏幕上看到的都只是「一直转」，分不出来。
+    """
+    from hk_job_radar.doctor import tcp_probe
+
+    name, host = _PROBE_REQUIRED[source]
+    if not tcp_probe(host):
+        print("⚠️  验证没有通过。我替你看了一下网络，问题出在网络这一侧：\n")
+        print(f"    你的网络连不上 {host}")
+        print(f"    ——{name}就放在这个域名上。验证所需的东西下载不下来，")
+        print("    所以页面会一直转，跟你点不点、等多久都无关。\n")
+        print("  三个办法，按省事程度排：")
+        print("    1. 把代理软件切成 TUN / 虚拟网卡模式，再双击一次这个脚本。")
+        print("       （这种模式在网络层接管流量，程序不需要额外设置）")
+        print('    2. 在 config.yaml 里把 browser.proxy 改成 "system"，')
+        print("       或直接填你的代理地址，例如 http://127.0.0.1:7890。")
+        print("    3. 换一个能直连香港的网络环境。\n")
+        print("  拿不准就先双击 doctor.bat，第 5 项「网络出口」会直接告诉你通不通。")
+        return
+
+    print("⚠️  验证没有通过，但网络是通的（验证组件能连上）。\n")
+    print("  说明卡在浏览器这一侧，常见原因有两个：")
+    print("    1. 那个复选框需要你亲手点一下才会开始验证 —— 请直接点它；")
+    print("    2. 当前出口 IP 被这个站点标成了高风险（机房 IP、共享节点常见），")
+    print("       换一个代理节点回来再试，通常就过了。")
 
 
 def _import_cookie_login(config, source: str) -> int:
@@ -381,7 +473,7 @@ def _db_path():
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hk_radar",
-        description="香港岗位雷达：定时监控求职网站的新岗位并推送 Telegram 日报。",
+        description="香港岗位雷达：定时监控求职网站的新岗位，按你的背景打分后推送到手机。",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -400,10 +492,18 @@ def _build_parser() -> argparse.ArgumentParser:
     p_stats.set_defaults(func=cmd_stats)
 
     p_doctor = sub.add_parser(
-        "doctor", help="一键自检：14 项体检，逐项告诉你哪里没配好、怎么修")
+        "doctor", help="一键自检：15 项体检，逐项告诉你哪里没配好、怎么修")
     p_doctor.add_argument("--no-llm", action="store_true",
                           help="跳过 AI 连通性实测（默认会真发一次很小请求，只消耗几个 token）")
     p_doctor.set_defaults(func=cmd_doctor)
+
+    p_setup = sub.add_parser(
+        "setup", help="打开网页配置向导（在浏览器里点选填配置，不用手改 YAML）")
+    p_setup.add_argument("--port", type=int, default=None,
+                         help="指定端口（默认从 8765 开始自动找一个空的）")
+    p_setup.add_argument("--no-browser", action="store_true",
+                         help="不自动打开浏览器，只打印地址")
+    p_setup.set_defaults(func=cmd_setup)
 
     p_notify = sub.add_parser("notify", help="推送通道相关操作")
     notify_sub = p_notify.add_subparsers(dest="notify_action", required=True)

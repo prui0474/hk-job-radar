@@ -222,6 +222,11 @@ class AppConfig:
     )
     browser_headless: bool = False
     cloudflare_wait_seconds: int = 45
+    #: 浏览器代理策略，三种取值：
+    #:   ""          强制直连（默认，保持既有行为不变）
+    #:   "system"    跟随系统代理 —— 内地网络只开了「系统代理模式」时用这个
+    #:   "http://…"  显式指定，例如 "http://127.0.0.1:7890"
+    browser_proxy: str = ""
     llm: LLMConfig = field(default_factory=LLMConfig)
     score_threshold: int = 60
     realtime_threshold: int = 80
@@ -475,6 +480,7 @@ def load_config(path: Path | None = None, *, require_runnable: bool = True) -> A
     br = raw.get("browser") or {}
     cfg.browser_headless = bool(br.get("headless", cfg.browser_headless))
     cfg.cloudflare_wait_seconds = int(br.get("cloudflare_wait_seconds", cfg.cloudflare_wait_seconds))
+    cfg.browser_proxy = str(br.get("proxy", cfg.browser_proxy) or "").strip()
 
     llm_raw = raw.get("llm") or {}
     cfg.llm = LLMConfig(

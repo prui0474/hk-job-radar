@@ -134,6 +134,61 @@ def test_cli_registers_doctor_command():
     assert args.func.__name__ == "cmd_doctor"
 
 
+# ---------------------------------------------------------------------------
+# 网络出口：验证组件通不通，决定「一直转圈」是网络问题还是配置问题
+# ---------------------------------------------------------------------------
+def _with_network(reachable: bool, system_proxy: str, cfg_proxy: str = "") -> Check:
+    """在「全部不通 / 全部能通」两种网络下跑一次网络检查。
+
+    直接替换探测函数，不真的联网 —— 否则测试结果取决于跑测试的人在哪。
+    """
+    import hk_job_radar.doctor as doc
+    from hk_job_radar.config import AppConfig
+
+    original_tcp, original_proxy = doc.tcp_probe, doc._system_proxy
+    doc.tcp_probe = lambda host, port=443, timeout=2.5: reachable
+    doc._system_proxy = lambda: system_proxy
+    try:
+        return doc._check_network(AppConfig(browser_proxy=cfg_proxy))
+    finally:
+        doc.tcp_probe, doc._system_proxy = original_tcp, original_proxy
+
+
+def test_network_ok_when_probes_reachable():
+    check = _with_network(True, system_proxy="")
+    assert check.status == OK
+    assert check.group == "环境"
+
+
+def test_network_points_to_browser_proxy_when_unused_system_proxy_exists():
+    """系统配了代理但程序默认直连 —— 这是内地用户最常见的死结，
+    提示必须直接给出「改成 system」这个动作，而不是泛泛说网络不好。"""
+    check = _with_network(False, system_proxy="127.0.0.1:7890")
+    assert check.status == WARN
+    assert "system" in check.hint
+    assert "127.0.0.1:7890" in check.hint
+
+
+def test_network_suggests_tun_when_no_proxy_at_all():
+    check = _with_network(False, system_proxy="")
+    assert check.status == WARN
+    assert "TUN" in check.hint
+
+
+def test_network_reports_which_probe_failed():
+    import hk_job_radar.doctor as doc
+    from hk_job_radar.config import AppConfig
+
+    original = doc.tcp_probe
+    doc.tcp_probe = lambda host, port=443, timeout=2.5: "google" not in host
+    try:
+        check = doc._check_network(AppConfig())
+    finally:
+        doc.tcp_probe = original
+    assert check.status == WARN
+    assert "人机验证" in check.detail
+
+
 if __name__ == "__main__":
     _fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in _fns:

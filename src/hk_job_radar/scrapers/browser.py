@@ -39,6 +39,26 @@ _CLOUDFLARE_MARKERS = (
 )
 
 
+def build_proxy_args(proxy: str) -> list[str]:
+    """把 browser.proxy 的取值翻译成 Chromium 的代理启动参数。
+
+    ""        → ["--no-proxy-server"]   强制直连（默认，与历史版本行为一致）
+    "system"  → []                     不传参数 = Chromium 自己读系统/环境变量里的代理
+    其它       → ["--proxy-server=…"]   显式指定，例如 "http://127.0.0.1:7890"
+
+    为什么默认是强制直连而不是跟随系统：早期实测发现，若本机存在一个配错的
+    本地代理，Chromium 走它会令 reCAPTCHA 资源加载失败、人机验证永远转圈。
+    但强制直连在“必须靠代理才能出境”的网络里等于把路堵死，所以做成可配：
+    需要走代理的人显式填 system 或具体地址，不需要的人保持默认、行为不变。
+    """
+    value = (proxy or "").strip()
+    if not value:
+        return ["--no-proxy-server"]
+    if value.lower() == "system":
+        return []
+    return [f"--proxy-server={value}"]
+
+
 class BrowserManager:
     """Playwright persistent context 的统一入口，被各适配器复用。"""
 
@@ -91,28 +111,30 @@ class BrowserManager:
         headless = self.config.browser_headless if force_headless is None else force_headless
         logger.debug(f"启动 persistent context：{source_key}"
                      f"（headless={headless}，档案目录={user_data_dir}）")
+
+        # 防崩溃参数（关键）：Windows 上 Chromium 的 GPU 渲染进程会在抓取
+        # 多页后崩溃（Page/Target crashed），禁用 GPU 与部分耗资源特性后稳定。
+        # 这些参数只影响本自动化浏览器，不影响用户日常使用的 Chrome。
+        chromium_args = [
+            "--disable-gpu",                  # 禁用 GPU 硬件加速：修复渲染进程崩溃
+            "--disable-dev-shm-usage",        # 降低共享内存占用，避免内存不足崩溃
+            "--disable-extensions",           # 禁用扩展，减少资源与变量
+            "--disable-background-networking",# 减少后台网络，降低干扰
+            "--no-first-run",                 # 跳过首次运行向导
+            "--no-default-browser-check",     # 跳过默认浏览器检测
+        ]
+        # 代理策略见 build_proxy_args：默认强制直连，browser.proxy 可改
+        chromium_args.extend(build_proxy_args(self.config.browser_proxy))
+        if self.config.browser_proxy.strip() and self.config.browser_proxy.strip().lower() != "system":
+            logger.info(f"浏览器代理：{self.config.browser_proxy.strip()}")
+
         context = self._playwright.chromium.launch_persistent_context(
             user_data_dir=str(user_data_dir),
             headless=headless,
             # 视口用常见桌面分辨率，降低"明显是自动化"的信号
             viewport={"width": 1366, "height": 900},
             locale="zh-HK",
-            # 防崩溃参数（关键）：Windows 上 Chromium 的 GPU 渲染进程会在抓取
-            # 多页后崩溃（Page/Target crashed），禁用 GPU 与部分耗资源特性后稳定。
-            # 这些参数只影响本自动化浏览器，不影响用户日常使用的 Chrome。
-            args=[
-                "--disable-gpu",                  # 禁用 GPU 硬件加速：修复渲染进程崩溃
-                "--disable-dev-shm-usage",        # 降低共享内存占用，避免内存不足崩溃
-                "--disable-extensions",           # 禁用扩展，减少资源与变量
-                "--disable-background-networking",# 减少后台网络，降低干扰
-                "--no-first-run",                 # 跳过首次运行向导
-                "--no-default-browser-check",     # 跳过默认浏览器检测
-                "--no-proxy-server",              # 强制直连、不走系统代理
-                                                  # 关键：本机环境有代理(127.0.0.1:4699)，
-                                                  # 若 Chromium 走了它会导致 Google/reCAPTCHA
-                                                  # 加载失败（LinkedIn 登录的人机验证无法完成）。
-                                                  # 香港网络直连 Google 正常，故强制直连。
-            ],
+            args=chromium_args,
         )
         page = context.new_page()
         self._contexts[source_key] = context
@@ -149,15 +171,20 @@ class BrowserManager:
         time.sleep(random.uniform(lo, hi))
 
     # ------------------------------------------------------------------
-    def wait_cloudflare(self, page, timeout_s: int | None = None) -> bool:
+    def wait_cloudflare(self, page, timeout_s: int | None = None,
+                        *, quiet: bool = False) -> bool:
         """若当前是 Cloudflare 挑战页则等待其自动通过。
 
         返回 True = 页面可用；False = 等待超时（调用方应放弃本轮，
         并提示用户运行 `python run.py login jobsdb` 手动过盾）。
+        quiet=True 时不打那条「请运行 login」的日志 —— login 命令自己
+        就在跑，它要打的是更具体的诊断，不希望被一句自指的提示盖住。
+
         绝不尝试任何绕过手段（合规红线）。
         """
         timeout_s = timeout_s or self.config.cloudflare_wait_seconds
         deadline = time.monotonic() + timeout_s
+        warned = False
         while time.monotonic() < deadline:
             try:
                 content = (page.content() or "").lower()
@@ -170,10 +197,17 @@ class BrowserManager:
                 continue
             if not any(m in content or m in title for m in _CLOUDFLARE_MARKERS):
                 return True
-            logger.warning("检测到 Cloudflare 挑战页，等待自动通过（不破解，只等待）...")
+            if not warned:
+                # 只提醒一次：20~45 秒里每 3 秒刷一条会把终端刷满，
+                # 反而盖住真正有用的提示。
+                logger.warning(
+                    f"检测到 Cloudflare 挑战页，等待自动通过"
+                    f"（最多 {timeout_s} 秒，不破解只等待）...")
+                warned = True
             time.sleep(3)
-        logger.error(f"Cloudflare 等待超时（{timeout_s}s）。"
-                     f"请运行: python run.py login jobsdb 手动完成验证。")
+        if not quiet:
+            logger.error(f"Cloudflare 等待超时（{timeout_s}s）。"
+                         f"请运行: python run.py login jobsdb 手动完成验证。")
         return False
 
     # ------------------------------------------------------------------

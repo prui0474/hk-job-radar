@@ -73,6 +73,38 @@ def test_format_errors_still_raise_in_readonly_mode():
         raise AssertionError("取值非法的配置在只读模式下也应当报错")
 
 
+def test_browser_proxy_default_stays_direct():
+    """browser.proxy 留空 = 强制直连，与历史行为一致。
+
+    这条钉住「默认不变」：早期实测过，本机存在一个配错的本地代理时，
+    Chromium 走它会让 reCAPTCHA 资源加载失败、人机验证永远转圈。
+    所以默认直连；需要走代理的人显式填，不能替所有人默认打开。
+    """
+    from hk_job_radar.scrapers.browser import build_proxy_args
+
+    path = _write_config('career_stage: student\nkeywords:\n  - "data analyst"\n')
+    cfg = load_config(path)
+    assert cfg.browser_proxy == ""
+    assert build_proxy_args(cfg.browser_proxy) == ["--no-proxy-server"]
+
+
+def test_browser_proxy_system_and_explicit_address():
+    from hk_job_radar.scrapers.browser import build_proxy_args
+
+    head = 'career_stage: student\nkeywords:\n  - "data analyst"\n'
+    # "system" → 不传代理参数，让 Chromium 自己读系统设置
+    cfg = load_config(_write_config(head + 'browser:\n  proxy: "system"\n'))
+    assert cfg.browser_proxy == "system"
+    assert build_proxy_args(cfg.browser_proxy) == []
+
+    # 显式地址 → 直接传给 Chromium
+    cfg = load_config(
+        _write_config(head + 'browser:\n  proxy: "http://127.0.0.1:7890"\n'))
+    assert cfg.browser_proxy == "http://127.0.0.1:7890"
+    assert build_proxy_args(cfg.browser_proxy) == \
+        ["--proxy-server=http://127.0.0.1:7890"]
+
+
 if __name__ == "__main__":
     _fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in _fns:

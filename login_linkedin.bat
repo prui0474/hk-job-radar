@@ -15,11 +15,28 @@ if not defined PY (
     exit /b 1
 )
 
-echo A browser window will open.
-echo Log in to your LinkedIn account, then come back here and press Enter.
+echo ============================================================
+echo   Log in to LinkedIn - pick one way
+echo ============================================================
 echo.
+echo   1 = Open a browser window and log in there.
+echo       Try this first. A small dedicated account is recommended.
+echo.
+echo   2 = Copy the login cookie from your own browser.
+echo       Use this when the verification box in the opened window
+echo       keeps spinning and never lets you through.
+echo.
+set "MODE="
+set /p "MODE=Type 1 or 2, then press Enter (blank = 1): "
 
+if "%MODE%"=="2" goto cookie
 "%PY%" run.py login linkedin
-
 echo.
 pause
+exit /b 0
+
+:cookie
+"%PY%" run.py login linkedin --cookie
+echo.
+pause
+exit /b 0

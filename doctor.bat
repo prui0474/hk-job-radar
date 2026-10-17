@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-REM Run a full self-check (14 items) and tell you what still needs fixing.
+REM Run a full self-check (15 items) and tell you what still needs fixing.
 REM Use this when something is not working, or before asking for help.
 set "PYTHONUTF8=1"
 cd /d "%~dp0"
