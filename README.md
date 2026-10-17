@@ -128,7 +128,9 @@ flowchart LR
 5. Open `data/profiles/profile.yaml` in Notepad → fill in **your own background**
    (this is what the LLM scores jobs against — don't skip it).
 6. Double-click **`login_jobsdb.bat`** once (Cloudflare pass-through).
-7. Double-click **`start.bat`** (keep it running) — or **`run_once.bat`** for a
+7. Double-click **`doctor.bat`** — a 14-item self-check. If anything is marked with
+   a cross, it tells you exactly what to change. Run it until it is all green.
+8. Double-click **`start.bat`** (keep it running) — or **`run_once.bat`** for a
    single sweep. Either way you get a digest the first time you run it that day,
    and new high-scoring jobs are pushed as they appear.
 
@@ -150,8 +152,10 @@ Same flow, but the files end in `.command` instead of `.bat`:
    blocks downloaded scripts — see `MAC-打不开就读我.txt` if the button is missing).
 4. Fill in `config.yaml` (bot token, your keywords) and
    `data/profiles/profile.yaml` — same as Windows steps 4–5.
-5. Double-click `login_jobsdb.command` once, then `run_once.command` (single sweep)
-   or `start.command` (keep running).
+5. Double-click `login_jobsdb.command` once.
+6. Double-click **`doctor.command`** — a 14-item self-check that names whatever is
+   still missing and how to fix it. Get it all green first.
+7. Then `run_once.command` (single sweep) or `start.command` (keep running).
 
 `install.command` also registers a **daily 09:00 launchd job**; if the Mac is asleep
 at that moment, it runs on wake. Remove it any time with `关闭自动运行.command`.
@@ -201,6 +205,7 @@ python run.py once             # run ONE sweep, push the digest, then exit (or d
 python run.py run              # keep monitoring in the foreground (or double-click start.bat)
 python run.py report now       # send today's digest immediately
 python run.py notify test      # send a test message to your push channel(s) — verify setup in 10s
+python run.py doctor           # self-check: 14 items, says exactly what is still misconfigured
 python run.py stats            # today's fetch/new/push counts
 python run.py apply <job_uid>  # semi-auto application assistant
 ```
@@ -294,6 +299,7 @@ hk_job_radar/
 │   ├── scoring/                   # keyword filter + LLM scorer
 │   ├── copilot/                   # semi-auto apply (form filler + QA)
 │   ├── notify/                    # 4 push channels: base / dispatch / wecom / wxpusher / email / telegram
+│   ├── doctor.py                  # 14-item self-check (double-click doctor.bat / .command)
 │   ├── tier.py                    # free-tier caps in one place (see Free vs Pro)
 │   ├── pipeline.py / scheduler.py
 │   └── config.py / db.py / models.py
@@ -378,12 +384,17 @@ Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾*
 5. 用记事本打开 `data/profiles/profile.yaml` → 填**你自己的真实背景**
    （这是 AI 打分所依据的画像，别跳过）
 6. 双击一次 **`login_jobsdb.bat`**（过一次防护验证）
-7. 双击 **`start.bat`**（保持窗口开着）；只想跑一轮就双击 **`run_once.bat`**。
+7. 双击 **`doctor.bat`** —— 14 项自检。哪一项标了 ❌，它就写清了该怎么改；
+   看着全绿了再往下走。
+8. 双击 **`start.bat`**（保持窗口开着）；只想跑一轮就双击 **`run_once.bat`**。
    当天第一次运行就会收到一份日报，之后新出现的达标岗位会推送。
 
 > 第 4、5 步是安装脚本**唯一帮不了你**的两件事：**你想找什么**、**你是谁**。
 > 跳过它们，程序照样会跑，但会抓错岗位、再拿一份空画像去打分。
 > 每一步点哪里，见[保姆级新手教程](docs/getting-started-zh.md)。
+>
+> **拿不准自己配对了没有？双击 `doctor.bat`。** 它会把 14 项逐个查一遍，
+> 缺什么就直说该改哪一行——不用猜，也不用等我回复。
 
 **方式 A2 —— Mac 一键安装，同样不用敲命令**
 
@@ -398,8 +409,10 @@ Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾*
    （只有第一次需要这样，因为文件是从网上下载的；找不到「打开」按钮就看
    项目里的 `MAC-打不开就读我.txt`）
 4. 填 `config.yaml` 和 `data/profiles/profile.yaml`——和 Windows 的第 4、5 步一样
-5. 双击一次 `login_jobsdb.command`，然后双击 `run_once.command`（只跑一轮）
-   或 `start.command`（一直挂着）
+5. 双击一次 `login_jobsdb.command`
+6. 双击 **`doctor.command`** —— 14 项自检，缺什么、怎么补都会写清楚；
+   全绿了再往下走
+7. 然后双击 `run_once.command`（只跑一轮）或 `start.command`（一直挂着）
 
 `install.command` 会顺手注册**每天 09:00 自动运行**（电脑当时在睡觉也会在
 唤醒后补跑）；不想要就双击 `关闭自动运行.command`。
@@ -439,6 +452,7 @@ python run.py once                # 只抓一轮就退出并推日报（或直�
 python run.py run                 # 启动监控（或直接双击 start.bat）
 python run.py report now          # 立刻补发一次日报
 python run.py notify test         # 给推送通道发一条测试消息（配完通道后先点这个，10 秒验证）
+python run.py doctor              # 一键自检：14 项体检，逐条告诉你哪里没配好、怎么修
 python run.py stats               # 查看今日抓取/推送统计
 python run.py apply <job_uid>     # 投递副驾（半自动填表）
 ```

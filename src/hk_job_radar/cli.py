@@ -157,6 +157,17 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """`hk_radar doctor`：一键自检。
+
+    只读诊断：不改配置、不动数据，只告诉你「哪里没配好、怎么修」。
+    有 ❌ 项时返回 1，全通过（或只有提醒）返回 0 —— 方便写进脚本做前置检查。
+    """
+    from hk_job_radar.doctor import run_doctor
+
+    return run_doctor(llm_test=not args.no_llm)
+
+
 def cmd_apply(args: argparse.Namespace) -> int:
     """`hk_radar apply <job_id>`：投递副驾（T05）。
 
@@ -387,6 +398,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_stats = sub.add_parser("stats", help="查看今日抓取量/新岗位数/推送数")
     p_stats.set_defaults(func=cmd_stats)
+
+    p_doctor = sub.add_parser(
+        "doctor", help="一键自检：14 项体检，逐项告诉你哪里没配好、怎么修")
+    p_doctor.add_argument("--no-llm", action="store_true",
+                          help="跳过 AI 连通性实测（默认会真发一次很小请求，只消耗几个 token）")
+    p_doctor.set_defaults(func=cmd_doctor)
 
     p_notify = sub.add_parser("notify", help="推送通道相关操作")
     notify_sub = p_notify.add_subparsers(dest="notify_action", required=True)
