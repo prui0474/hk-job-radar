@@ -1174,6 +1174,10 @@ class _WizardServer(ThreadingHTTPServer):
                  token: str) -> None:
         super().__init__(addr, handler)
         self.token = token
+        # 本次会话里有没有成功保存过配置。
+        # 安装脚本靠它判断「向导关掉之后该不该接着往下走」：用户可能只是
+        # 打开看了一眼就关了，这时候往下跑体检毫无意义，应当提示他回去保存。
+        self.saved_ok = False
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -1280,6 +1284,10 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/save":
                 result = apply_form(prepare_form(payload))
+                if result.get("ok"):
+                    # 只有真的写盘成功才算「保存过」；校验失败不算，
+                    # 否则安装脚本会以为配置已就绪，直接跳去体检。
+                    self.server.saved_ok = True
                 self._send_json(result)
                 return
             if path == "/api/doctor":
@@ -1383,8 +1391,26 @@ def _open_browser_later(url: str, delay: float = 0.7) -> None:
     threading.Timer(delay, _open).start()
 
 
-def run_wizard(*, port: Optional[int] = None, open_browser: bool = True) -> int:
-    """启动向导，阻塞直到用户按 Ctrl+C。返回进程退出码。"""
+#: 向导被关掉、但这次会话里一次都没保存成功时的退出码。
+#: 单独占一个值（而不是笼统的 1），是为了让安装脚本能分清两种情况：
+#:   「用户还没保存，该提醒他回去保存」 vs 「向导本身起不来，该报错」。
+EXIT_UNSAVED = 3
+
+
+def run_wizard(*, port: Optional[int] = None, open_browser: bool = True,
+               chained: bool = False) -> int:
+    """启动向导，阻塞直到用户关掉它。返回进程退出码。
+
+    返回码：
+      0  配置已保存（本次会话里至少成功写盘一次）
+      1  页面文件缺失
+      2  端口用不了
+      3  向导关了，但一次都没保存过 —— 见 EXIT_UNSAVED
+
+    `chained` 为真表示本向导是被安装脚本串起来的一段（install.bat /
+    install.command 自动打开）。此时收尾的提示语要说「我接着往下走」，
+    而不是「你自己去双击下一个脚本」——用户此刻正在等下一步发生。
+    """
     if not UI_PATH.exists():
         print(f"❌ 页面文件缺失：{UI_PATH}")
         return 1
@@ -1405,6 +1431,19 @@ def run_wizard(*, port: Optional[int] = None, open_browser: bool = True) -> int:
             return 2
 
     url = f"http://127.0.0.1:{server.server_port}/?{TOKEN_QUERY}={server.token}"
+    if chained:
+        closing_hint = [
+            "  在这个页面里填完，点最下面的「保存配置」。",
+            "  保存好之后，点「关闭向导」—— 我会接着往下做体检，",
+            "  你不用再双击任何东西。",
+        ]
+    else:
+        closing_hint = [
+            "  在这个页面里填完，点最下面的「保存配置」。",
+            "  保存好之后，点「关闭向导」（或回这个窗口按 Ctrl + C），",
+            "  然后双击 start.bat（Mac 上是 start.command）开始找工作。",
+        ]
+
     print()
     print("=" * 62)
     print("  香港岗位雷达 · 配置向导")
@@ -1413,9 +1452,8 @@ def run_wizard(*, port: Optional[int] = None, open_browser: bool = True) -> int:
     print("  浏览器地址（没自动打开就把这一行复制到浏览器地址栏）：")
     print(f"    {url}")
     print()
-    print("  在这个页面里填完，点最下面的「保存配置」。")
-    print("  保存好之后，点「关闭向导」（或回这个窗口按 Ctrl + C），")
-    print("  然后双击 start.bat（Mac 上是 start.command）开始找工作。")
+    for line in closing_hint:
+        print(line)
     print()
     print("-" * 62)
     print("  这个页面只在你本机能打开，同一个 WiFi 下的其他电脑连不上。")
@@ -1429,15 +1467,20 @@ def run_wizard(*, port: Optional[int] = None, open_browser: bool = True) -> int:
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n向导已关闭。配置已经保存的话，可以直接双击 start.bat 了。")
+        pass                  # 下面统一按 saved_ok 判断该说什么
     finally:
         server.shutdown()
         server.server_close()
+
+    if not server.saved_ok:
+        print("\n（这次没有保存任何设置。）")
+        return EXIT_UNSAVED
+    print("\n✅ 配置已保存。")
     return 0
 
 
 __all__ = [
     "WizardForm", "form_from_payload", "prepare_form", "validate_form",
     "render_config_text", "verify_config_text", "apply_form", "current_state",
-    "run_wizard", "UI_PATH", "PORT_START", "PORT_END",
+    "run_wizard", "EXIT_UNSAVED", "UI_PATH", "PORT_START", "PORT_END",
 ]

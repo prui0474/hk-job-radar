@@ -108,25 +108,24 @@ Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾*
 
 1. 安装 [Python](https://www.python.org/downloads/)——务必勾选 **"Add python.exe to PATH"**
 2. 在本页面点 **Code → Download ZIP**，下载后解压
-3. 双击 **`install.bat`**——自动装好一切，还会引导你填 DeepSeek key
-4. 用记事本打开 `config.yaml` → 在 `notify.channels` 里写你要用的通道
-   （`wecom` / `wxpusher` / `email` / `telegram` 任选一个，凭据只填你选的那个）并填好它
-   下面的那几行；设好 `career_stage`（`student` / `graduate` / `both`）；
-   **再在 `keywords` 下面填上你自己要找的岗位**（模板刻意留空，不预置默认词）
-5. 用记事本打开 `data/profiles/profile.yaml` → 填**你自己的真实背景**
-   （这是 AI 打分所依据的画像，别跳过）
-6. 双击一次 **`login_jobsdb.bat`**（过一次防护验证）
-7. 双击 **`doctor.bat`** —— 15 项自检。哪一项标了 ❌，它就写清了该怎么改；
-   看着全绿了再往下走。
-8. 双击 **`start.bat`**（保持窗口开着）；只想跑一轮就双击 **`run_once.bat`**。
+3. 双击 **`install.bat`**，然后跟着窗口走就行——它会一口气做完这些事：
+   - 装好依赖和浏览器内核，并引导你填 DeepSeek key；
+   - **自动打开配置页面**：你在这里填**要找的岗位**、**选一个推送通道**、
+     填**你自己的背景**，点「保存配置」→「关闭向导」；
+   - **自动做 15 项自检**，全绿才往下走，有 ❌ 就直接写明该改哪一行；
+   - **自动打开浏览器**，让你过一次 JobsDB 的安全验证。
+4. 看到 `全部就绪。` 之后，双击 **`start.bat`**（保持窗口开着）；
+   只想跑一轮就双击 **`run_once.bat`**。
    当天第一次运行就会收到一份日报，之后新出现的达标岗位会推送。
 
-> 第 4、5 步是安装脚本**唯一帮不了你**的两件事：**你想找什么**、**你是谁**。
-> 跳过它们，程序照样会跑，但会抓错岗位、再拿一份空画像去打分。
+> 整个流程里**只有一件事机器替不了你**：告诉它**你想找什么岗位**、**你是谁**。
+> 这两处就在第 3 步自动打开的配置页面里。跳过它们，程序照样会跑，但会抓错岗位、
+> 再拿一份空画像去打分。
 > 每一步点哪里，见[保姆级新手教程](docs/getting-started-zh.md)。
 >
 > **拿不准自己配对了没有？双击 `doctor.bat`。** 它会把 15 项逐个查一遍，
 > 缺什么就直说该改哪一行——不用猜，也不用等我回复。
+> 装完之后想改关键词或推送通道，双击 `setup.bat` 再走一遍那个页面即可。
 
 **方式 A2 —— Mac 一键安装，同样不用敲命令**
 
@@ -140,11 +139,10 @@ Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾*
 3. **按住 Control 点 `install.command` →「打开」→ 再点「打开」**
    （只有第一次需要这样，因为文件是从网上下载的；找不到「打开」按钮就看
    项目里的 `MAC-打不开就读我.txt`）
-4. 填 `config.yaml` 和 `data/profiles/profile.yaml`——和 Windows 的第 4、5 步一样
-5. 双击一次 `login_jobsdb.command`
-6. 双击 **`doctor.command`** —— 15 项自检，缺什么、怎么补都会写清楚；
-   全绿了再往下走
-7. 然后双击 `run_once.command`（只跑一轮）或 `start.command`（一直挂着）
+   —— 之后它和 Windows 一样，把配置页面、15 项自检、 JobsDB 安全验证
+   一口气带完，中途不用你再判断该点哪个文件
+4. 看到 `全部就绪。` 之后，双击 `run_once.command`（只跑一轮）或
+   `start.command`（一直挂着）
 
 `install.command` 会顺手注册**每天 09:00 自动运行**（电脑当时在睡觉也会在
 唤醒后补跑）；不想要就双击 `关闭自动运行.command`。
@@ -382,23 +380,28 @@ flowchart LR
 
 1. Install [Python](https://www.python.org/downloads/) — tick **"Add python.exe to PATH"**.
 2. On this page click **Code → Download ZIP**, then unzip it.
-3. Double-click **`install.bat`** — it sets everything up and asks for your DeepSeek key.
-4. Double-click **`setup.bat`** — a browser page opens on your own machine. Fill in
-   four boxes: *what you're looking for* (your target job titles), *who you are*
-   (the background the AI scores against), *where to send messages* (pick one of
-   the four channels and paste its credentials), and *when to send the daily digest*.
-   Click **Save**, then **Close wizard**. No YAML editing, no indentation to get wrong.
-5. Double-click **`login_jobsdb.bat`** once (Cloudflare pass-through).
-6. Double-click **`doctor.bat`** — a 15-item self-check. If anything is marked with
-   a cross, it tells you exactly what to change. Run it until it is all green.
-7. Double-click **`start.bat`** (keep it running) — or **`run_once.bat`** for a
-   single sweep. Either way you get a digest the first time you run it that day,
-   and new high-scoring jobs are pushed as they appear.
+3. Double-click **`install.bat`** and follow the window. It chains the rest of the
+   setup for you:
+   - installs dependencies and the browser engine, and asks for your DeepSeek key;
+   - **opens the setup page automatically** — fill in *what you're looking for*
+     (target job titles), *who you are* (the background the AI scores against), and
+     *where to send messages* (pick one of the four channels and paste its
+     credentials). Click **Save**, then **Close wizard**. No YAML editing, no
+     indentation to get wrong;
+   - **runs the 15-item self-check automatically**, and only continues when it is
+     all green — anything marked with a cross tells you exactly what to change;
+   - **opens a browser for the one-time JobsDB verification**.
+4. Once it prints `全部就绪。` ("all set"), double-click **`start.bat`** (keep it
+   running) — or **`run_once.bat`** for a single sweep. Either way you get a digest
+   the first time you run it that day, and new high-scoring jobs are pushed as they
+   appear.
 
-> Step 4 is the one thing the installer **cannot** do for you: describing *what
-> you're looking for* and *who you are*. Skip it and the tool still runs, but it
-> will fetch the wrong roles and score them against an empty profile.
+> The one thing the installer **cannot** do for you is describing *what you're
+> looking for* and *who you are* — that is the setup page it opens for you in step 3.
+> Skip it and the tool still runs, but it will fetch the wrong roles and score them
+> against an empty profile.
 > Exact click-by-click steps: [beginner's guide](docs/getting-started-zh.md) (Chinese).
+> Want to change keywords or the push channel later? Double-click `setup.bat`.
 
 **Option A2 — One-click install on macOS (no terminal needed)**
 
@@ -411,11 +414,10 @@ Same flow, but the files end in `.command` instead of `.bat`:
    browser may fail with `Operation not permitted`).
 3. **Control-click `install.command` → Open → Open** (first launch only; macOS
    blocks downloaded scripts — see `MAC-打不开就读我.txt` if the button is missing).
-4. Double-click **`setup.command`** and fill in the four boxes — same as Windows step 4.
-5. Double-click `login_jobsdb.command` once.
-6. Double-click **`doctor.command`** — a 15-item self-check that names whatever is
-   still missing and how to fix it. Get it all green first.
-7. Then `run_once.command` (single sweep) or `start.command` (keep running).
+   It then walks the same chain as Windows: setup page → self-check → JobsDB
+   verification, without asking you to pick the next file.
+4. Once it prints `全部就绪。`, double-click `run_once.command` (single sweep) or
+   `start.command` (keep running).
 
 `install.command` also registers a **daily 09:00 launchd job**; if the Mac is asleep
 at that moment, it runs on wake. Remove it any time with `关闭自动运行.command`.

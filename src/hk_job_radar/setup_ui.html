@@ -443,8 +443,11 @@
 <div id="result"></div>
 
 <div class="foot">
-  保存成功后：点「关闭向导」，然后双击 <code class="inl">start.bat</code>
-  （Mac 上是 <code class="inl">start.command</code>）。
+  保存成功后：点「关闭向导」继续。<br>
+  如果是从 <code class="inl">install</code> 一路装下来的，接下来会自动做体检，
+  不用你再双击别的；单独打开本向导的，关掉后双击
+  <code class="inl">start.bat</code>（Mac 上是
+  <code class="inl">start.command</code>）就开始。
   以后想改配置，随时再双击 <code class="inl">setup.bat</code> 就行。
 </div>
 
@@ -632,7 +635,7 @@
       var html = '<div class="box ok"><h3>配置已保存</h3>' +
         "写入的文件：<b>" + res.written.map(esc).join("</b>、<b>") + "</b>" +
         (res.backup ? "<br>原来的配置已备份为 <code class='inl'>" + esc(res.backup) + "</code>" : "") +
-        "<br>下一步：点「关闭向导」，再双击 <code class='inl'>start.bat</code>。</div>" +
+        "<br>下一步：点「关闭向导」继续。</div>" +
         noteBox(res.notes);
       if (res.diff && res.diff.length) {
         html += '<div class="box info"><h3>这次改了什么</h3>' + diffTable(res.diff) + "</div>";

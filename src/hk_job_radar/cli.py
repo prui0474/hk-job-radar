@@ -174,10 +174,27 @@ def cmd_setup(args: argparse.Namespace) -> int:
     这是个「会一直占着窗口」的命令（像 run 一样），关掉窗口或按 Ctrl+C
     才结束。所以它放在命令行里而不是做成静默后台服务 —— 用户看得见、
     停得掉，才知道发生了什么。
+
+    返回码见 setup_wizard.run_wizard：3 表示向导关了但一次都没保存过。
+    安装脚本靠这个码决定「要不要提醒用户回去点保存」。
     """
     from hk_job_radar.setup_wizard import run_wizard
 
-    return run_wizard(port=args.port, open_browser=not args.no_browser)
+    return run_wizard(port=args.port, open_browser=not args.no_browser,
+                      chained=bool(getattr(args, "chain", False)))
+
+
+def cmd_guide(args: argparse.Namespace) -> int:
+    """`hk_radar guide <key>`：打印安装流程里的一段中文提示。
+
+    存在的唯一理由是编码：批处理文件（.bat）必须是纯 ASCII，否则
+    cmd.exe 在非 65001 代码页下会把它整片解析成乱码。而 Windows 用户
+    最需要的恰恰是中文说明，所以这些长句交给 Python 来打印。
+    """
+    from hk_job_radar.install_guide import main as guide_main
+
+    key = getattr(args, "key", None)
+    return guide_main([key] if key else [])
 
 
 def cmd_apply(args: argparse.Namespace) -> int:
@@ -195,8 +212,8 @@ def cmd_apply(args: argparse.Namespace) -> int:
     job = db.get_job(args.job_id)
     if job is None:
         print(f"❌ 找不到岗位：{args.job_id}")
-        print("   提示：job_uid 形如 jobsdb:12345678；可用 `python run.py stats` 查看，"
-              "或到日报卡片里复制岗位 ID。")
+        print("   提示：job_uid 形如 jobsdb:12345678；可以到日报卡片里复制岗位 ID，"
+              "或双击 report_now.bat 重新发一份日报。")
         return 1
 
     # 延迟导入：copilot 依赖 playwright，stats/login 等命令不应被它拖累
@@ -349,7 +366,7 @@ def cmd_login(args: argparse.Namespace) -> int:
         print("   按上面的提示处理网络后，再双击一次这个脚本。")
         return 1
 
-    print("\n✅ 登录态已持久化。可运行 `python run.py stats` 或 `python run.py run` 开始使用。")
+    print("\n✅ 登录态已保存。接下来双击 start.bat（Mac 上是 start.command）就开始跑了。")
     return 0
 
 
@@ -503,7 +520,16 @@ def _build_parser() -> argparse.ArgumentParser:
                          help="指定端口（默认从 8765 开始自动找一个空的）")
     p_setup.add_argument("--no-browser", action="store_true",
                          help="不自动打开浏览器，只打印地址")
+    p_setup.add_argument("--chain", action="store_true",
+                         help="由安装脚本串联调用：保存后提示「我接着往下走」"
+                              "（单独运行 setup.bat 时不需要这个开关）")
     p_setup.set_defaults(func=cmd_setup)
+
+    p_guide = sub.add_parser(
+        "guide", help="打印安装流程里的中文提示（供安装脚本调用，平时用不到）")
+    p_guide.add_argument("key", nargs="?", default=None,
+                         help="提示语名称；省略则列出全部可用的")
+    p_guide.set_defaults(func=cmd_guide)
 
     p_notify = sub.add_parser("notify", help="推送通道相关操作")
     notify_sub = p_notify.add_subparsers(dest="notify_action", required=True)

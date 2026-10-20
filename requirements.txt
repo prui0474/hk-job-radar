@@ -25,6 +25,10 @@
 # ---------------------------------------------------------------------------
 
 playwright>=1.44          # 浏览器自动化（装完还须执行：playwright install chromium）
+                          # 这里刻意不写上界：让新系统享受新版本的浏览器内核。
+                          # 代价是旧系统（macOS 13.5 以下）跑不起新版自带的运行器，
+                          # 会报 Symbol not found / dyld。install 脚本会先探测、
+                          # 再自动降到 1.45 / 1.44 / 1.43，用户不需要手工处理。
 apscheduler>=3.10,<4      # 定时调度（用 3.x 的 BlockingScheduler，刻意不上 4.x 新 API）
 openai>=1.30              # LLM SDK（DeepSeek 完全兼容 OpenAI API，只需改 base_url）
 requests>=2.31            # Telegram Bot API 直调 + 通用 HTTP

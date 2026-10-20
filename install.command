@@ -4,7 +4,10 @@
 # ============================================================================
 #  对应 Windows 的 install.bat。做的事完全一样：
 #    检查 Python → 建虚拟环境 → 装依赖 → 装 Chromium 内核 → 生成配置
-#    → 收集 DeepSeek key → 设置每天 09:00 自动运行
+#    → 收集 DeepSeek key → 设置自动运行 → 配置向导 → 体检 → 过一次验证
+#
+#  也就是说：用户只需要双击这一次，后面每一步都由本脚本接着做，
+#  不用自己判断「现在该点哪个文件」。
 #
 #  和 .bat 的区别：这里敢写中文（macOS 终端天生 UTF-8，没有 cmd.exe 那种
 #  非 ASCII 解析问题），对用户更友好。
@@ -66,7 +69,7 @@ radar_ok "找到 Python：$PY3"
 # ---------------------------------------------------------------------------
 echo
 if [ -x "$RADAR_ROOT/.venv/bin/python" ]; then
-    echo "[2/5] 虚拟环境已存在，跳过"
+    echo "[2/7] 虚拟环境已存在，跳过"
 elif [ -x "$RADAR_ROOT/.venv/Scripts/python.exe" ]; then
     # 这个 .venv 是在 Windows 上建的（Mac 的虚拟环境结构完全不同：bin/ 而不是 Scripts/）。
     # 有人可能是把整个项目文件夹从 Windows 拷到 Mac 才遇到这种情况。此时直接
@@ -84,7 +87,7 @@ elif [ -x "$RADAR_ROOT/.venv/Scripts/python.exe" ]; then
     radar_pause
     exit 1
 else
-    echo "[2/5] 正在创建虚拟环境（约 10 秒）..."
+    echo "[2/7] 正在创建虚拟环境（约 10 秒）..."
     "$PY3" -m venv "$RADAR_ROOT/.venv"
     if [ ! -x "$RADAR_ROOT/.venv/bin/python" ]; then
         radar_err "虚拟环境创建失败。请把整个窗口截图发给我。"
@@ -110,7 +113,7 @@ fi
 #   先走官方源；失败（国内网络常见）自动换成清华镜像重试一次。
 # ---------------------------------------------------------------------------
 echo
-echo "[3/5] 正在安装依赖（首次约 1-3 分钟，请勿关闭窗口）..."
+echo "[3/7] 正在安装依赖（首次约 1-3 分钟，请勿关闭窗口）..."
 if ! "$VENV_PY" -m pip install --disable-pip-version-check \
         -r "$RADAR_ROOT/requirements.txt"; then
     radar_warn "官方源失败，自动改用清华镜像重试..."
@@ -130,7 +133,40 @@ radar_ok "依赖安装完成"
 #   （约 150MB，只下一次，以后复用）。
 # ---------------------------------------------------------------------------
 echo
-echo "[4/5] 正在下载浏览器内核 Chromium（首次约 1-3 分钟）..."
+echo "[4/7] 正在准备浏览器内核 Chromium（首次约 1-3 分钟）..."
+
+# ---------------------------------------------------------------------------
+# 先确认 playwright 自带的运行器能不能在这台机器上跑起来。
+#   旧版 macOS（低于 13.5）跑新版本 playwright 时，它内置的 node 运行器会直接
+#   因为找不到新版 libc++ 的符号而崩溃（报 Symbol not found / dyld ... built for
+#   Mac OS X 13.5）。这不是网络问题，换镜像重试多少次都一样 —— 所以必须先降
+#   版本，再去下载内核，否则用户会被「请检查网络」这句提示带到沟里。
+# ---------------------------------------------------------------------------
+if ! "$VENV_PY" -m playwright --version >/dev/null 2>&1; then
+    radar_warn "当前版本的浏览器工具无法在你的系统上运行（常见于 macOS 13.5 以下）"
+    echo "      正在自动改用兼容版本，这个不用你操作，稍等就好..."
+    PW_PINNED=""
+    for pin in 1.45.0 1.44.0 1.43.1; do
+        echo "      尝试 playwright==$pin ..."
+        if "$VENV_PY" -m pip install --disable-pip-version-check -q \
+                "playwright==$pin" >/dev/null 2>&1 \
+           && "$VENV_PY" -m playwright --version >/dev/null 2>&1; then
+            PW_PINNED="$pin"
+            break
+        fi
+    done
+    if [ -z "$PW_PINNED" ]; then
+        radar_err "没能在你的系统上找到可用的浏览器工具版本。"
+        echo
+        echo "  你的 macOS 版本：$(sw_vers -productVersion 2>/dev/null || echo 未知)"
+        echo "  最省事的办法是把系统升级到 13.5 以上，再重新双击本文件："
+        echo "    苹果菜单  →  系统设置  →  通用  →  软件更新"
+        radar_pause
+        exit 1
+    fi
+    radar_ok "已改用兼容版本 playwright $PW_PINNED"
+fi
+
 if ! "$VENV_PY" -m playwright install chromium; then
     radar_warn "默认源下载失败，自动改用国内镜像重试..."
     if ! PLAYWRIGHT_DOWNLOAD_HOST=https://npmmirror.com/mirrors/playwright/ \
@@ -146,12 +182,29 @@ radar_ok "浏览器内核已就绪"
 # 第 5 步：生成配置文件
 #   已存在的文件一律不覆盖——里面可能有用户自己填的内容。
 # ---------------------------------------------------------------------------
+# FRESH=1 表示 config.yaml 是这一次才生成的，也就是「第一次安装」。
+# 只有第一次安装才带用户走配置向导、才自动过一次人机验证；
+# 以后重复双击本文件，只修环境，绝不碰用户自己的设置。
+FRESH=0
+[ -f "$RADAR_ROOT/config.yaml" ] || FRESH=1
+
+# INTERACTIVE=1 表示真的有人正看着这个窗口。
+# 判据与 radar_pause 完全一致：有终端 + 不是 CI。
+#
+# 为什么后面几步都要靠它把关：配置向导会一直等人操作，体检又必然因为
+# CI 里没有密钥/没有配置而报 ❌ —— 两者都会让 CI 里的 ./install.command
+# 卡死或变红。有真人在时这些步骤才有意义。
+INTERACTIVE=0
+if [ -t 0 ] && [ -z "${CI:-}" ]; then
+    INTERACTIVE=1
+fi
+
 echo
 if [ -f "$RADAR_ROOT/config.yaml" ]; then
-    echo "[5/5] config.yaml 已存在，保留你的设置"
+    echo "[5/7] config.yaml 已存在，保留你的设置"
 else
     cp "$RADAR_ROOT/config.example.yaml" "$RADAR_ROOT/config.yaml"
-    echo "[5/5] 已生成 config.yaml"
+    echo "[5/7] 已生成 config.yaml"
 fi
 mkdir -p "$RADAR_ROOT/data/profiles" "$RADAR_ROOT/data/logs"
 if [ -f "$RADAR_ROOT/data/profiles/profile.yaml" ]; then
@@ -204,24 +257,72 @@ if [ -z "${CI:-}" ] && [ -t 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# 第 6 步：配置向导（只在第一次安装时走）
+#   两个跳过条件：
+#     1) config.yaml 之前就存在 —— 用户已经配过了，不该再打扰他
+#     2) 没有真人在看窗口（CI）—— 向导要等人在浏览器里点，非交互环境下
+#        它会一直挂着，把整个构建卡死
+# ---------------------------------------------------------------------------
+if [ "$FRESH" = "1" ] && [ "$INTERACTIVE" = "1" ]; then
+    echo
+    echo "[6/7] 正在打开配置向导（浏览器窗口会自动弹出）..."
+    echo "      填完点最下面的「保存配置」，再点「关闭向导」——"
+    echo "      这个窗口在等你，请不要关掉它。"
+    echo
+    "$VENV_PY" "$RADAR_ROOT/run.py" setup --chain
+    SETUP_CODE=$?
+    if [ "$SETUP_CODE" -eq 3 ]; then
+        # 3 = 向导关了但一次都没保存过。往下体检毫无意义，停下来把话说清楚。
+        "$VENV_PY" "$RADAR_ROOT/run.py" guide need-save
+        radar_pause
+        exit 3
+    elif [ "$SETUP_CODE" -ne 0 ]; then
+        "$VENV_PY" "$RADAR_ROOT/run.py" guide wizard-failed
+        radar_pause
+        exit 1
+    fi
+    radar_ok "配置已保存"
+fi
+
+# ---------------------------------------------------------------------------
+# 第 7 步：体检
+#   15 项逐条检查。只要有一项 ❌ 就停下来 —— 带着坏配置往下走，用户
+#   只会更晚、更困惑地撞上同一个问题。
+#
+#   没有真人在场时直接跳过：CI 里的配置是模板复制出来的空壳（没有密钥、
+#   没有推送通道），体检必然报 ❌。那不是代码坏了，是还没人配置过。
+# ---------------------------------------------------------------------------
+if [ "$INTERACTIVE" = "1" ]; then
+    echo
+    echo "[7/7] 正在体检（15 项）..."
+    echo
+    if ! "$VENV_PY" "$RADAR_ROOT/run.py" doctor; then
+        "$VENV_PY" "$RADAR_ROOT/run.py" guide doctor-failed
+        radar_pause
+        exit 1
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 最后一步：过一次 JobsDB 的人机验证
+#   体检全绿才走这里，而且只有第一次安装才走 —— 用户此刻正坐在屏幕前，
+#   是让他顺手过一次验证的最好时机，比事后再让他去双击另一个文件强。
+# ---------------------------------------------------------------------------
+if [ "$FRESH" = "1" ] && [ "$INTERACTIVE" = "1" ]; then
+    echo
+    "$VENV_PY" "$RADAR_ROOT/run.py" guide verify-intro
+    if ! "$VENV_PY" "$RADAR_ROOT/run.py" login jobsdb; then
+        "$VENV_PY" "$RADAR_ROOT/run.py" guide verify-skip
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # 完成
 # ---------------------------------------------------------------------------
 echo
-echo "============================================"
-echo " 安装完成！还剩 4 件小事："
-echo
-echo "  1. 双击「配置」相关的文件，或直接用记事本打开 config.yaml，填好："
-echo "       - notify.channels：从 企业微信 / 邮件 / Telegram / WxPusher 里【选一个】"
-echo "         （四个通道完全平等，没有默认；选哪个就填哪个下面的那几行）"
-echo "       - career_stage：student（在读）/ graduate（已毕业）/ both"
-echo "       - 把 keywords 换成你自己想找的岗位名称"
-echo "  2. 打开 data/profiles/profile.yaml，填上你自己的背景。"
-echo "     AI 就是拿这份画像给岗位打分的 —— 这一步千万别跳过。"
-echo "     省力办法：把你的简历贴给 DeepSeek，让它照着模板帮你填。"
-echo "  3. 第一次使用请双击一次「login_jobsdb.command」（过一下网站的安全检查）"
-echo "  4. 双击「start.command」开始监控；或者双击「run_once.command」只跑一轮"
-echo
-echo " 完整图文教程（中文，一步一步点）：docs/getting-started-zh.md"
-echo " Mac 专用教程：                docs/mac-安装教程.md"
-echo "============================================"
+if [ "$FRESH" = "1" ]; then
+    "$VENV_PY" "$RADAR_ROOT/run.py" guide done
+else
+    "$VENV_PY" "$RADAR_ROOT/run.py" guide repeat-done
+fi
 radar_pause
