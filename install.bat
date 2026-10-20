@@ -150,7 +150,7 @@ REM Everything from here to :finish is skipped in CI: there is no human to
 REM click through the wizard or to fix what the self-check reports, so those
 REM steps would either hang the build or fail it for the wrong reason.
 if defined CI goto chain_skipped
-if not "%FRESH%"=="1" goto after_wizard
+if not "%FRESH%"=="1" goto wizard_skipped
 
 echo [6/7] Opening the configuration wizard in your browser...
 echo       Fill in the form, click "Save", then click "Close wizard".
@@ -161,6 +161,13 @@ if errorlevel 3 goto wizard_unsaved
 if errorlevel 1 goto wizard_failed
 echo.
 echo       Settings saved.
+goto after_wizard
+
+:wizard_skipped
+echo [6/7] Configuration wizard - skipped (config.yaml already exists).
+echo       Double-click setup.bat any time to change your settings.
+echo.
+
 :after_wizard
 
 REM ---- 7/7. Self-check ----
