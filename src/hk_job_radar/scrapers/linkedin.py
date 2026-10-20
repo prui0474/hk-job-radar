@@ -178,8 +178,8 @@ class LinkedInScraper(BaseScraper):
                 if self._page_is_authwall(page):
                     logger.warning(
                         "[linkedin] 页面被重定向到登录/注册墙：未登录状态下 LinkedIn 会节流访客。\n"
-                        "  请运行 `python run.py login linkedin` 用【求职专用小号】登录一次，\n"
-                        "  登录态保存在 data/browser/linkedin/，之后自动复用。")
+                        "  下一步：双击 login_linkedin.bat（Mac 上是 login_linkedin.command），\n"
+                        "  用【求职专用小号】登录一次，登录态会保存下来自动复用。")
                     break
                 # 页面已真正加载，此时判断登录态才有意义（只判断第一次）
                 if not login_checked:
@@ -223,8 +223,8 @@ class LinkedInScraper(BaseScraper):
             return
         logger.warning(
             "[linkedin] 未检测到登录态，将以访客模式抓取（结果可能不完整）。\n"
-            "  建议：运行 `python run.py login linkedin` 用【求职专用小号】登录一次，\n"
-            "  登录态保存在 data/browser/linkedin/，后续自动复用。"
+            "  建议：双击 login_linkedin.bat（Mac 上是 login_linkedin.command），\n"
+            "  用【求职专用小号】登录一次，登录态会保存下来自动复用。"
         )
 
     @staticmethod

@@ -24,7 +24,11 @@ from urllib.parse import quote_plus
 from loguru import logger
 
 from hk_job_radar.models import HK_TZ, JobPosting
-from hk_job_radar.scrapers.base import BaseScraper, LimitReachedError
+from hk_job_radar.scrapers.base import (
+    BaseScraper,
+    LimitReachedError,
+    NeedsManualVerifyError,
+)
 from hk_job_radar.scrapers.job_types import build_jobsdb_worktype
 
 # ---------------------------------------------------------------------------
@@ -133,9 +137,12 @@ class JobsDBScraper(BaseScraper):
                 logger.info(f"[jobsdb] 打开搜索页：{keyword} 第 {page_no} 页")
 
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                # 导航后先过 Cloudflare 检查（等待而非破解）
-                if not self.browser.wait_cloudflare(page):
-                    raise RuntimeError("Cloudflare 挑战未通过，本轮放弃（不破解，只等待）")
+                # 导航后先过 Cloudflare 检查（等待而非破解）。
+                # 超时说明这一轮自动验证没走通 —— 抛专用异常，让上层直接说
+                # 「双击 login_jobsdb」。不这么做的话，tenacity 还会再重试两轮，
+                # 每轮又等满 45 秒，用户白等三分钟才看到那句提示。
+                if not self.browser.wait_cloudflare(page, quiet=True):
+                    raise NeedsManualVerifyError(self.source_name)
                 page.wait_for_load_state("networkidle", timeout=30000)
                 # 每次导航之间的随机延迟：防封号核心手段
                 self.browser.human_delay()

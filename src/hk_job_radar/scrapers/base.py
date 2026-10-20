@@ -12,18 +12,37 @@ from __future__ import annotations
 
 import hashlib
 import re
+import sys
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional
 from urllib.parse import parse_qs, urlencode, urlsplit, urlunsplit
 
 from loguru import logger
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_not_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from hk_job_radar.config import AppConfig
 from hk_job_radar.db import Database
 from hk_job_radar.models import JobPosting
 from hk_job_radar.scrapers.browser import BrowserManager
+
+
+class NeedsManualVerifyError(Exception):
+    """该站必须先由用户亲手过一次人机验证，程序替不了（合规红线：不破解）。
+
+    单独定成一个异常类型，是为了让 _attempt_fetch 的 tenacity **不重试**它：
+    没有验证态时重试三轮，结果一模一样，只会让用户白等三分钟。
+    """
+
+    def __init__(self, source: str) -> None:
+        self.source = source
+        super().__init__(f"{source} 需要先过一次人机验证")
+
 
 # 需要剥除的跟踪参数（url_normalized 的去噪规则）。保留岗位定位必需参数。
 _TRACKING_PARAMS = {"utm_source", "utm_medium", "utm_campaign", "utm_term",
@@ -89,6 +108,20 @@ class BaseScraper(ABC):
                 self.db.log_event(self.source_name, "limit_hit",
                                   {"at": "fetch_new_jobs"})
             return []
+        except NeedsManualVerifyError as exc:
+            # 这一条要说得非常具体：用户此刻最需要知道的是「双击哪个文件」，
+            # 而不是「运行哪条命令」。写成命令等于默认他会开终端。
+            entry = f"login_{exc.source}.bat"
+            if sys.platform != "win32":
+                entry = f"login_{exc.source}.command"
+            logger.error(
+                f"[{exc.source}] 这个站还没过过人机验证，本轮直接跳过（不重试）。\n"
+                f"    下一步：双击项目文件夹里的 {entry}\n"
+                f"    在弹出的浏览器里点一下验证；看到正常的搜索结果页面，就可以关掉它。\n"
+                f"    这一步只需要做一次，之后程序会记住（验证有效期内不用再来）。")
+            if self.db:
+                self.db.log_event(exc.source, "needs_manual_verify", {"entry": entry})
+            return []
         except Exception as exc:
             # 3 次退避后仍失败：放弃本轮该站，写日志，绝不抛出到调度层
             logger.error(f"[{self.source_name}] 抓取失败（重试 3 次后放弃）：{exc}")
@@ -100,6 +133,8 @@ class BaseScraper(ABC):
         # 2s → 8s → 32s：multiplier=2, exp_base=4 → 2*4^0, 2*4^1, 2*4^2；封顶 60s
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=2, exp_base=4, max=60),
+        # 「没过验证」不是偶发故障，重试三次结果一样，只会让用户多等三分钟
+        retry=retry_if_not_exception_type(NeedsManualVerifyError),
         reraise=True,
     )
     def _attempt_fetch(self, last_seen_cutoff: datetime) -> list[JobPosting]:

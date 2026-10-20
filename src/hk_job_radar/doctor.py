@@ -16,6 +16,7 @@ doctor 把这些排查经验固化成 15 项体检：一次跑完，用中文说
 """
 from __future__ import annotations
 
+import base64
 import os
 import re
 import socket
@@ -26,6 +27,7 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
 from loguru import logger
 
@@ -169,6 +171,37 @@ def _check_dependencies() -> Check:
         "或手动执行：pip install -r requirements.txt")
 
 
+def _macos_version() -> Optional[tuple[int, int]]:
+    """读 macOS 版本号（只用大版本.次版本）。不是 Mac 或读不到返回 None。"""
+    if sys.platform != "darwin":
+        return None
+    try:
+        import subprocess
+
+        out = subprocess.run(["sw_vers", "-productVersion"], capture_output=True,
+                             text=True, timeout=3).stdout.strip()
+        parts = out.split(".")
+        return int(parts[0]), int(parts[1])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+#: playwright 自带的 Node 运行器要求的最低系统版本比某些用户高。
+#: 一旦它起不来，报错里会出现下面这些词（dyld 找不到新版 libc++ 的符号）。
+_DRIVER_INCOMPATIBLE_MARKERS = (
+    "symbol not found",
+    "dyld",
+    "libc++",
+    "image not found",
+    "built for mac os x",
+)
+
+
+def _looks_like_driver_incompatible(exc: BaseException) -> bool:
+    text = f"{exc}".lower()
+    return any(marker in text for marker in _DRIVER_INCOMPATIBLE_MARKERS)
+
+
 def _check_chromium() -> Check:
     """浏览器内核是否下载好了 —— 没它就一个岗位也抓不到。"""
     try:
@@ -183,12 +216,25 @@ def _check_chromium() -> Check:
             return Check("环境", "浏览器内核", OK, "Chromium 已就绪")
         return Check(
             "环境", "浏览器内核", FAIL, "Chromium 没有下载",
-            "在项目目录里执行一句：playwright install chromium"
-            "（约 130MB，装一次就够）。")
+            "双击 install.bat（Windows）/ install.command（Mac），它会自动补上；\n"
+            "约 130MB，装一次就够。")
     except Exception as exc:  # noqa: BLE001
+        # 旧版 macOS 上，playwright 自带的运行器会直接崩溃（dyld 找不到符号）。
+        # 这和「没下载」是两回事，混在一起会把用户引去查网络。
+        if _looks_like_driver_incompatible(exc):
+            version = _macos_version()
+            shown = f"{version[0]}.{version[1]}" if version else "当前版本"
+            return Check(
+                "环境", "浏览器内核", FAIL,
+                f"playwright 无法在你的 macOS {shown} 上运行",
+                "这不是网络问题，也不是你装错了 —— 是系统版本低于 playwright 的要求"
+                "（macOS 13.5）。\n"
+                "双击 install.command 重装一遍，它会自动挑一个能跑的版本；\n"
+                "或者在苹果菜单 → 系统设置 → 通用 → 软件更新 里升级系统。")
         return Check(
             "环境", "浏览器内核", FAIL, f"检查失败：{type(exc).__name__}",
-            "执行：playwright install chromium。若反复失败，把这条报错发给我。")
+            "双击 install.bat / install.command 重新装一遍浏览器内核。\n"
+            "若反复失败，把这条报错全文发给我。")
 
 
 #: 过盾和人机验证各依赖一个第三方域名。
@@ -201,12 +247,130 @@ _NET_PROBES: tuple[tuple[str, str], ...] = (
 
 
 def tcp_probe(host: str, port: int = 443, timeout: float = 2.5) -> bool:
-    """能不能跟这个域名建立 TCP 连接（不做 TLS，只判断通不通）。"""
+    """能不能跟这个域名建立 TCP 连接（不做 TLS，只判断通不通）。
+
+    注意：这是**直连**探测，不经过任何代理。要判断「配了代理之后通不通」，
+    必须用下面的 proxy_probe()，否则会把「代理其实是好的」误报成「不通」。
+    """
     try:
         with socket.create_connection((host, port), timeout=timeout):
             return True
     except OSError:
         return False
+
+
+def _proxy_endpoint(proxy: str) -> Optional[tuple[str, int]]:
+    """把 browser.proxy 的写法拆成 (主机, 端口)；写错或为空返回 None。
+
+    支持 http:// 与 socks5://；不带协议头时按 http 处理（Clash / v2rayN
+    的混合端口同时接受两种协议）。
+    """
+    raw = (proxy or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = urlsplit(raw if "://" in raw else "http://" + raw)
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:      # 端口写成 abc 这类
+        return None
+    if not host:
+        return None
+    scheme = (parsed.scheme or "http").lower()
+    return host, port or (1080 if scheme.startswith("socks") else 8080)
+
+
+def proxy_port_open(proxy: str, timeout: float = 2.0) -> bool:
+    """代理软件本身的端口有没有在监听。
+
+    单独查这一项，是为了把「代理没开 / 端口填错」和「代理开着但出不去」
+    分开——这两种情况用户的下一步动作完全不同。
+    """
+    endpoint = _proxy_endpoint(proxy)
+    if not endpoint:
+        return False
+    try:
+        with socket.create_connection(endpoint, timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _http_connect(sock: socket.socket, host: str, port: int,
+                  username: str, password: str) -> bool:
+    """在已建立的 socket 上发 HTTP CONNECT，看代理是否返回 200。"""
+    lines = [f"CONNECT {host}:{port} HTTP/1.1", f"Host: {host}:{port}"]
+    if username:
+        token = base64.b64encode(f"{username}:{password}".encode()).decode()
+        lines.append(f"Proxy-Authorization: Basic {token}")
+    sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
+    head = sock.recv(256)
+    if not head:
+        return False
+    return b" 200" in head.split(b"\r\n", 1)[0]
+
+
+def _socks5_connect(sock: socket.socket, host: str, port: int,
+                    username: str, password: str) -> bool:
+    """手写 SOCKS5 握手（只做 CONNECT，不支持 UDP / BIND）。"""
+    sock.sendall(b"\x05\x02\x00\x02" if username else b"\x05\x01\x00")
+    greeting = sock.recv(2)
+    if len(greeting) < 2 or greeting[0] != 5:
+        return False
+    if greeting[1] == 0x02:
+        user = (username or "").encode()[:255]
+        pwd = (password or "").encode()[:255]
+        sock.sendall(b"\x01" + bytes([len(user)]) + user + bytes([len(pwd)]) + pwd)
+        auth = sock.recv(2)
+        if len(auth) < 2 or auth[1] != 0:
+            return False
+    elif greeting[1] != 0x00:
+        return False
+    try:
+        addr = host.encode("idna")
+    except UnicodeError:
+        return False
+    sock.sendall(b"\x05\x01\x00\x03" + bytes([len(addr)]) + addr
+                 + port.to_bytes(2, "big"))
+    reply = sock.recv(10)
+    return len(reply) >= 2 and reply[1] == 0x00
+
+
+def proxy_probe(proxy: str, host: str, port: int = 443,
+                timeout: float = 4.0) -> Optional[bool]:
+    """经代理探测目标域名能不能通。
+
+    True  = 代理能把这个域名接出去
+    False = 代理在，但这条线路到不了目标
+    None  = 这种写法没法探测（例如 socks4），调用方应退回直连判断
+    """
+    endpoint = _proxy_endpoint(proxy)
+    if not endpoint:
+        return None
+    raw = proxy.strip()
+    parsed = urlsplit(raw if "://" in raw else "http://" + raw)
+    scheme = (parsed.scheme or "http").lower()
+    # 先判断协议支不支持，再去连端口：否则一个写错的 socks4 地址会被
+    # 报成「代理不通」，用户会以为是软件没开。
+    if scheme not in ("http", "https", "socks5", "socks5h"):
+        return None
+    try:
+        sock = socket.create_connection(endpoint, timeout=timeout)
+    except OSError:
+        return False
+    try:
+        sock.settimeout(timeout)
+        if scheme in ("http", "https"):
+            return _http_connect(sock, host, port,
+                                 parsed.username or "", parsed.password or "")
+        if scheme in ("socks5", "socks5h"):
+            return _socks5_connect(sock, host, port,
+                                   parsed.username or "", parsed.password or "")
+        return None
+    except OSError:
+        return False
+    finally:
+        sock.close()
 
 
 def _system_proxy() -> str:
@@ -249,42 +413,92 @@ def _system_proxy() -> str:
     return ""
 
 
+def _resolve_proxy_route(proxy_setting: str,
+                         system_proxy: str) -> tuple[Optional[str], str]:
+    """决定这次探测实际走哪条代理：返回 (代理地址或 None, 给人看的来源说明)。
+
+    三种取值对应三条路：
+      ""        → 直连（返回 None）
+      "system"  → 读系统代理；系统里没有就是直连
+      "http://…"→ 就用它
+    """
+    value = (proxy_setting or "").strip()
+    if not value:
+        return None, ""
+    if value.lower() == "system":
+        if system_proxy:
+            return system_proxy, f"系统代理 {system_proxy}"
+        return None, ""
+    return value, value
+
+
 def _check_network(cfg: Optional[AppConfig]) -> Check:
     """安全验证要用的两个域名通不通 —— 这是「一直转圈」最常见的原因。
 
     为什么要专门查这一项：用户看到的是「转圈」，真实原因往往是「验证所需的
     那段脚本根本下载不下来」。前者让人怀疑自己配错了，后者是网络问题，
     两者的下一步完全不同，靠猜要猜很久。
+
+    关键：**按 browser.proxy 真正走一遍代理去探**。早期版本这里是裸 socket
+    直连，于是用户在配置里填了正确的代理，仍然被报「目标仍然不通」——
+    这条误报会把人引向「端口填错了」，白折腾半天。
     """
-    unreachable = [name for name, host in _NET_PROBES if not tcp_probe(host)]
     proxy_setting = (cfg.browser_proxy if cfg is not None else "").strip()
     system_proxy = _system_proxy()
+    via, via_label = _resolve_proxy_route(proxy_setting, system_proxy)
+
+    # 第一层：配了代理，但这个代理在本机根本没人监听（软件没开 / 端口填错）。
+    # 先说这一层，别让用户跑去换节点。
+    if via and not proxy_port_open(via):
+        detail = f"代理端口连不上（{via}）"
+        if proxy_setting.lower() == "system":
+            hint = (f"配置写的是「跟随系统代理」，系统代理指向 {system_proxy}，"
+                    "但这个端口没有程序在监听。\n"
+                    "多半是代理软件没打开。先把它开起来，再跑一次自检。")
+        else:
+            hint = (f"已经指定代理 {proxy_setting}，但本机没有程序在监听这个端口。\n"
+                    "两种可能：① 代理软件没开；② 端口填错——"
+                    "Clash Verge 默认 7897、Clash for Windows 默认 7890、"
+                    "v2rayN 默认 10809。\n"
+                    "打开代理软件，照它界面上显示的端口改到一致。")
+        return Check("环境", "网络出口", WARN, detail, hint)
+
+    # 第二层：逐个域名探。有代理就走代理，没代理才直连。
+    unreachable: list[str] = []
+    unsupported = False
+    for name, host in _NET_PROBES:
+        if via:
+            ok = proxy_probe(via, host)
+            if ok is None:          # socks4 这类不支持，退回直连判断
+                unsupported = True
+                ok = tcp_probe(host)
+        else:
+            ok = tcp_probe(host)
+        if not ok:
+            unreachable.append(name)
 
     if not unreachable:
-        if proxy_setting and proxy_setting.lower() != "system":
-            detail = f"验证组件都可达（经 {proxy_setting}）"
-        elif proxy_setting.lower() == "system":
-            detail = "验证组件都可达（跟随系统代理）"
-        else:
-            detail = "验证组件都可达"
-        return Check("环境", "网络出口", OK, detail)
+        suffix = f"（经 {via_label}）" if via else ""
+        if unsupported:
+            suffix += "，该代理类型只能直连检测"
+        return Check("环境", "网络出口", OK, f"验证组件都可达{suffix}")
 
     detail = ("验证组件都连不上" if len(unreachable) == len(_NET_PROBES)
               else f"{unreachable[0]}连不上")
 
-    if not proxy_setting and system_proxy:
+    if via:
+        hint = (f"代理能连上（{via_label}），但这条线路到不了验证组件。\n"
+                "也就是代理软件没问题、是当前节点出不去。换一个节点再跑一次；\n"
+                "订阅制的机场可以先看客户端里这个节点的延迟和可用性。")
+    elif system_proxy and not proxy_setting:
         hint = (
             f"系统里配了代理（{system_proxy}），但程序默认直连、不读它。\n"
             '把 config.yaml 里 browser.proxy 改成 "system" 再跑一次；\n'
             "不想改文件就双击 setup.bat，在页面里改。")
     elif proxy_setting.lower() == "system":
-        hint = (
-            "已经设为跟随系统代理，目标仍然不通 —— 多半是代理软件没在运行，\n"
-            "或当前节点连不到这两个域名。先确认代理软件开着，再换个节点试试。")
-    elif proxy_setting:
-        hint = (
-            f"已经指定代理（{proxy_setting}），目标仍然不通。\n"
-            "核对地址和端口是否与代理软件界面上显示的一致，以及软件是否在运行。")
+        hint = ("配置写的是「跟随系统代理」，但这台电脑没有配系统代理。\n"
+                "要么在代理软件里打开「系统代理 / 设置为系统代理」，\n"
+                "要么直接把地址写进 browser.proxy，例如 http://127.0.0.1:7897。")
     else:
         hint = (
             "直连不通，系统里也没有代理。你需要一条能访问这两个域名的通道：\n"

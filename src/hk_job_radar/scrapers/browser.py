@@ -176,7 +176,7 @@ class BrowserManager:
         """若当前是 Cloudflare 挑战页则等待其自动通过。
 
         返回 True = 页面可用；False = 等待超时（调用方应放弃本轮，
-        并提示用户运行 `python run.py login jobsdb` 手动过盾）。
+        并提示用户双击 login_jobsdb.bat 手动过盾）。
         quiet=True 时不打那条「请运行 login」的日志 —— login 命令自己
         就在跑，它要打的是更具体的诊断，不希望被一句自指的提示盖住。
 
@@ -206,8 +206,14 @@ class BrowserManager:
                 warned = True
             time.sleep(3)
         if not quiet:
-            logger.error(f"Cloudflare 等待超时（{timeout_s}s）。"
-                         f"请运行: python run.py login jobsdb 手动完成验证。")
+            # 这条提示曾经写的是「请运行 python run.py login jobsdb」—— 对绝大多数
+            # 用户等于没说：他们不会开终端。改成「双击哪个文件」，命令行写法不出现。
+            logger.error(
+                f"Cloudflare 等待超时（{timeout_s} 秒）。\n"
+                f"    这不是你配错了，是这个站的验证页没有自动放行。\n"
+                f"    下一步：双击项目文件夹里对应的 login_*.bat"
+                f"（Mac 上是 login_*.command），\n"
+                f"    在弹出的浏览器里手动点一下验证，看到正常页面后关掉它，再重新启动。")
         return False
 
     # ------------------------------------------------------------------
