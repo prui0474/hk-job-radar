@@ -9,7 +9,7 @@
 > Local-first, privacy-first, compliance-first.
 
 <p align="center">
-  <img alt="Python" src="https://img.shields.io/badge/Python-3.11%2B-blue">
+  <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
   <img alt="License" src="https://img.shields.io/badge/License-MIT-green">
   <img alt="Region" src="https://img.shields.io/badge/Region-Hong%20Kong-red">
   <img alt="Self-hosted" src="https://img.shields.io/badge/Deploy-Local%20only-orange">
@@ -46,7 +46,7 @@ Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾*
 - **任何在香港求职的人**——学生、应届生、转行者都能用；用 `career_stage` 选身份，
   岗位类型过滤会自动跟着变；
 - **尤其适合持学生签证的港硕/非本地学生**（默认 `career_stage: student`，内置签证合规过滤，见下）；
-- 岗位方向**完全由你自己定**——双击 `setup.bat`，在打开的网页里填；
+- 岗位方向**完全由你自己定**——双击 `setup.bat`（Mac 上是 `setup.command`），在打开的网页里填；
   向导会先预填几个常见方向当示例，改成你自己的就行，覆盖任意岗位。
 
 ### 解决什么痛点
@@ -57,6 +57,32 @@ Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾*
 | 翻了一整个下午，一百个岗位里真正能投的就那么几个，其余全在耗你的时间和耐心 | 关键词初筛 + LLM 相关度打分（0–100），能投的排在最前面 |
 | 重复填申请表浪费时间 | 半自动填表 + 筛选问题答案生成 |
 | （非本地学生）搞不清哪些岗位学生签能合法做 | 内置签证合规过滤 |
+
+### 工作原理
+
+```mermaid
+flowchart LR
+    A[JobsDB] --> D[抓取]
+    B[LinkedIn] --> D
+    C[Indeed] --> D
+    D --> E[关键词初筛]
+    E --> F[大模型打分]
+    F --> G[SQLite 去重]
+    G --> H[日报推送]
+    H --> I[半自动填表]
+```
+
+1. **抓取** — 每个开启的站都按随机的人为延迟抓，并限制单站每日页数（防封号优先）。
+2. **初筛** — 先用关键词和同义词做便宜的匹配，把噪音丢掉，这样只有值得看的岗位才会
+   送进大模型，省的是你自己的 API 钱。
+3. **打分** — DeepSeek 对着你的个人画像给每个岗位打 0–100 分；调用失败会降级处理，
+   不会把整条流水线卡死。
+4. **去重入库** — SQLite 用「岗位 ID + 归一化 URL」双键去重，保证同一个岗位不会被
+   推第二遍。
+5. **推送** — 按分数排序的日报（电脑开着就 09:00 发，当天第一次开机也会补发）；
+   新出现的 ≥80 分岗位是高级版的实时秒推。
+6. **投递（可选）** — 帮你填表、传简历、起草筛选问题的答案，然后请你逐项核对、
+   **自己点「提交」**。
 
 ### 核心优点
 
@@ -102,6 +128,37 @@ Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾*
 - **免费版有额度上限**——最多 7 个关键词、1 个推送通道、每天 1 次日报，不含实时秒推。
   完整对照见下方「免费版与高级版」一节。
 
+### 网络要求
+
+程序只连下面这几个地方，除此之外不往任何地方发数据：
+
+| 用途 | 域名 | 什么时候需要 |
+| --- | --- | --- |
+| 抓岗位 | `hk.jobsdb.com` | 开启 JobsDB（带 Cloudflare 防护，要过一次人机验证） |
+| 抓岗位 | `hk.indeed.com` | 开启 Indeed |
+| 抓岗位 | `www.linkedin.com` | 开启 LinkedIn（需要账号） |
+| AI 打分 | `api.deepseek.com` | 始终需要 |
+| 推送 | `api.telegram.org` | 选了 Telegram |
+| 推送 | `qyapi.weixin.qq.com` | 选了企业微信 |
+| 推送 | `wxpusher.zjiecode.com` | 选了 WxPusher |
+| 推送 | 你的邮箱 SMTP 服务器 | 选了邮件 |
+| 过人机验证 | `challenges.cloudflare.com`、`www.google.com` | 始终需要（验证框要先下载脚本才画得出来） |
+
+**地区由网址决定，不由 IP 决定。** 三个站抓的都是 `hk.` 子域、或用
+`location: Hong Kong` 参数定位，所以不论你人在香港、英国、加拿大还是内地，
+抓回来的都是**香港的岗位**。
+
+| 你在哪 | 情况 |
+| --- | --- |
+| **香港** | 直连就行，不需要任何代理 |
+| **海外（英国 / 加拿大 / 澳洲等）** | 上表域名基本都通，**不需要代理**。DeepSeek API 在海外可直接调用，只有延迟略高。唯一要留意的是 **LinkedIn 的异地登录风控**（见下） |
+| **内地** | `challenges.cloudflare.com`、`www.google.com`、`api.telegram.org` 都不通，人机验证框会一直转圈。需要开代理（TUN / 虚拟网卡模式最省事），或把 `browser.proxy` 设成 `system`。见[新手教程附 B](docs/getting-started-zh.md) |
+
+> **LinkedIn 的异地登录**：LinkedIn 对「会话从一个地区突然跳到另一个地区」很敏感，
+> 可能要求重新验证甚至临时限制账号。所以**在哪个地区用，就在那个地区登一次**
+> （双击 `login_linkedin.bat` / `.command`）。
+> JobsDB 和 Indeed 不需要账号，换地区完全没影响——省事的话，关掉 LinkedIn 只跑这两个。
+
 ### 快速上手
 
 **方式 A —— 一键安装，全程不用敲命令（Windows，推荐）**
@@ -114,9 +171,15 @@ Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾*
      填**你自己的背景**，点「保存配置」→「关闭向导」；
    - **自动做 15 项自检**，全绿才往下走，有 ❌ 就直接写明该改哪一行；
    - **自动打开浏览器**，让你过一次 JobsDB 的安全验证。
-4. 看到 `全部就绪。` 之后，双击 **`start.bat`**（保持窗口开着）；
+4. 看到 `全部就绪。` 之后，双击 **`start.bat`**（**保持窗口开着**）；
    只想跑一轮就双击 **`run_once.bat`**。
    当天第一次运行就会收到一份日报，之后新出现的达标岗位会推送。
+   **`start.bat` 关掉之后就不会再自动跑了**——Windows 上「每天 09:00」
+   靠的是这个窗口一直在（Mac 上不一样，见方式 A2）。
+
+> 以后**再双击一次 `install.bat`** 只会检查环境，不会再弹配置页，
+> 收尾显示「环境已就绪，你的配置保持原样」。这是正常的，不是出错。
+> 想改配置就双击 `setup.bat`。
 
 > 整个流程里**只有一件事机器替不了你**：告诉它**你想找什么岗位**、**你是谁**。
 > 这两处就在第 3 步自动打开的配置页面里。跳过它们，程序照样会跑，但会抓错岗位、
@@ -145,7 +208,11 @@ Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾*
    `start.command`（一直挂着）
 
 `install.command` 会顺手注册**每天 09:00 自动运行**（电脑当时在睡觉也会在
-唤醒后补跑）；不想要就双击 `关闭自动运行.command`。
+唤醒后补跑），**不用一直开着窗口**；不想要就双击 `关闭自动运行.command`。
+
+> **Windows 上没有这层定时任务**，那边靠 `start.bat` 一直开着。
+> 不想整天开着电脑的话，用 `run_once.bat` 手动跑一轮，或者开「任务计划程序」
+> 自己加一条定时任务指向 `run_once.bat`。
 
 > 每一步点哪里、每个窗口长什么样，见 **[Mac 安装教程](docs/mac-安装教程.md)**。
 
@@ -172,10 +239,10 @@ python run.py login indeed
 > **Windows 中文编码提示（别删那一行）。** `requirements.txt` 的第一行
 > `# -*- coding: utf-8 -*-` 是刻意保留的：简体中文 Windows 下 pip 默认会用 GBK
 > 解码该文件，从而崩在 `UnicodeDecodeError: 'gbk' codec can't decode byte ...`。
-> 项目里的 7 个 `.bat` 也统一设了 `PYTHONUTF8=1`，保证窗口输出被重定向到文件时
+> 项目里的 **11 个 `.bat`** 也统一设了 `PYTHONUTF8=1`，保证窗口输出被重定向到文件时
 > 中文与 emoji 不会抛 `UnicodeEncodeError`。
 
-**日常使用 —— 无论哪种方式安装，之后就这两三条命令：**
+**日常使用 —— 无论哪种方式安装，常用的就下面这几条：**
 
 ```powershell
 python run.py once                # 只抓一轮就退出并推日报（或直接双击 run_once.bat）
@@ -190,6 +257,30 @@ python run.py apply <job_uid>     # 投递副驾（半自动填表）
 > **不想整天开着电脑？** 用 `once` / `run_once.bat`：抓一轮 → 打分 → 推日报 → 自动退出，
 > 开机十几分钟就够。日报若在开机时还没发过，也会自动补发。
 > 详见 `docs/uptime-strategy.md`。
+
+### 配置项说明
+
+所有设置在 `config.yaml` 里（`config.example.yaml` 是带逐行注释的模板）。
+**不想碰文本文件就双击 `setup.bat`（Mac 上是 `setup.command`），在网页里点。**
+
+| 配置项 | 作用 |
+| --- | --- |
+| `sources` | 开启哪几个招聘站 |
+| `keywords` | 你要找的岗位名称（免费版最多 7 个） |
+| `graduate_keywords` | 毕业后的全职岗位（管理培训生等）；与上面合计不超过 7 个 |
+| `career_stage` | `student` = 只抓实习/兼职 · `graduate` = 全职 · `both` = 两者 |
+| `job_types` | 高级覆盖项；正常由 `career_stage` 自动推导，一般不用手填 |
+| `notify.channels` | 用哪个推送通道——四个完全平等，写在第一位的就是生效的那个 |
+| `notify.wecom` / `wxpusher` / `email` / `telegram` | 各通道自己的凭据，只填你选中的那一个 |
+| `keyword_rotation` | 每轮搜几个关键词（按你每天开机多久来调） |
+| `daily_limits` | 单站每个香港自然日的页数上限 |
+| `location` | 目标地区，默认 Hong Kong |
+| `score_threshold` / `realtime_threshold` | 60 = 进日报的分数线；80 = 实时推送线（高级版） |
+| `report_time` | 日报时间（香港时间） |
+
+`data/profiles/profile.yaml` 的 `background:` 段是 AI 打分的依据，**必须换成你自己的**
+技能、经历与目标岗位。若该段缺失、或仍是一堆 `<占位符>`，程序会退回一段通用描述来打分，
+分数参考价值很低（但不会报错——这是最容易被忽略的一步）。
 
 ### 合规与安全
 
@@ -245,12 +336,13 @@ python run.py apply <job_uid>     # 投递副驾（半自动填表）
 
 ### 联系
 
-有问题、想反馈，或者想用高级版：微信 **pigrui-zr**（加的时候备注一句「岗位雷达」，通过快一些）。
+有问题、想反馈，或者想用高级版：邮箱 **P_RUI@outlook.com**
+（标题里带一句「岗位雷达」，我一眼就能认出来）。
 
 ### Contact
 
-Questions, feedback, or interested in the Pro version: WeChat **pigrui-zr**
-(a one-line note saying "HK Job Radar" gets you through faster).
+Questions, feedback, or interested in the Pro version: email **P_RUI@outlook.com**
+(put "HK Job Radar" in the subject line).
 
 ### License
 
@@ -316,7 +408,7 @@ flowchart LR
 4. **Dedup + store** — SQLite double-key (job ID + normalized URL) guarantees no
    duplicate pushes.
 5. **Notify** — a digest sorted by score (09:00 if the PC is on, otherwise the first
-   time you power on that day) + instant push for new roles ≥ 80.
+   time you power on that day). Instant push for new roles ≥ 80 is a Pro feature.
 6. **Apply (optional)** — fills forms + uploads resume + drafts screening answers,
    then asks you to review every field and **click submit yourself**.
 
@@ -374,6 +466,31 @@ flowchart LR
 - **The free tier is capped** — up to 7 keywords, 1 push channel, 1 digest per day,
   no instant push. See *Free vs Pro* below for the full comparison.
 
+### Network requirements
+
+The tool talks to these hosts and nothing else:
+
+`hk.jobsdb.com` · `hk.indeed.com` · `www.linkedin.com` · `api.deepseek.com` ·
+`challenges.cloudflare.com` · `www.google.com` — plus one push channel
+(`api.telegram.org` / `qyapi.weixin.qq.com` / `wxpusher.zjiecode.com` / your SMTP
+server).
+
+**Region is decided by URL, not by your IP.** All three boards are queried through
+their Hong Kong subdomain or a `location: Hong Kong` parameter, so you get Hong Kong
+postings wherever you are.
+
+| Where you are | What to expect |
+| --- | --- |
+| Hong Kong | works directly, no proxy |
+| Overseas (UK, Canada, Australia…) | every host above is reachable, **no proxy needed**; the DeepSeek API works globally with slightly higher latency. The one thing to watch is **LinkedIn's location-based login checks** |
+| Mainland China | `challenges.cloudflare.com`, `www.google.com` and `api.telegram.org` are unreachable — the verification widget will spin forever. Use a proxy in TUN mode, or set `browser.proxy: system` |
+
+> **LinkedIn and changing regions**: LinkedIn is sensitive to a session jumping
+> between countries and may demand re-verification or temporarily restrict the
+> account. Log in again from wherever you actually are (double-click
+> `login_linkedin.bat` / `.command`). JobsDB and Indeed need no account, so they are
+> unaffected — disabling LinkedIn and running those two is the friction-free option.
+
 ### Quick start
 
 **Option A — One-click install, no terminal needed (Windows, recommended)**
@@ -391,10 +508,15 @@ flowchart LR
    - **runs the 15-item self-check automatically**, and only continues when it is
      all green — anything marked with a cross tells you exactly what to change;
    - **opens a browser for the one-time JobsDB verification**.
-4. Once it prints `全部就绪。` ("all set"), double-click **`start.bat`** (keep it
-   running) — or **`run_once.bat`** for a single sweep. Either way you get a digest
+4. Once it prints `全部就绪。` ("all set"), double-click **`start.bat`** and **leave it
+   running** — or **`run_once.bat`** for a single sweep. Either way you get a digest
    the first time you run it that day, and new high-scoring jobs are pushed as they
-   appear.
+   appear. On Windows the 09:00 schedule lives **inside that window**: close it and
+   the daily digests stop (macOS is different — see Option A2).
+
+> Running `install.bat` a second time only re-checks the environment: it does not
+> reopen the setup page, and it ends with "环境已就绪，你的配置保持原样" ("environment
+> ready, your settings are untouched"). That is expected, not a failure.
 
 > The one thing the installer **cannot** do for you is describing *what you're
 > looking for* and *who you are* — that is the setup page it opens for you in step 3.
@@ -420,7 +542,12 @@ Same flow, but the files end in `.command` instead of `.bat`:
    `start.command` (keep running).
 
 `install.command` also registers a **daily 09:00 launchd job**; if the Mac is asleep
-at that moment, it runs on wake. Remove it any time with `关闭自动运行.command`.
+at that moment, it runs on wake. **No window needs to stay open.** Remove it any time
+with `关闭自动运行.command`.
+
+> Windows has no equivalent scheduled task — there the 09:00 digest depends on
+> `start.bat` staying open. To avoid leaving the PC on all day, use `run_once.bat`
+> in a single sweep, or add a Task Scheduler entry pointing at it.
 
 > Full version, with every screen explained:
 > **[Mac 安装教程 →](docs/mac-安装教程.md)**
@@ -496,7 +623,7 @@ Everything is in `config.yaml` (see `config.example.yaml` for commented defaults
 | `keyword_rotation` | how many keywords to search per cycle (tune to your uptime) |
 | `daily_limits` | per-site page cap per Hong Kong calendar day |
 | `location` | target region |
-| `score_threshold` / `realtime_threshold` | 60 = daily, 80 = instant push |
+| `score_threshold` / `realtime_threshold` | 60 = digest threshold, 80 = instant push (Pro) |
 | `report_time` | daily digest time (HK) |
 
 The `background` section of `data/profiles/profile.yaml` drives LLM scoring — **you must
@@ -570,9 +697,14 @@ Here's to a high-paying offer you actually want — and to it landing soon.
 
 ```
 hk_job_radar/
-├── install.bat / start.bat / run_once.bat      # Windows: double-click these
-├── install.command / start.command / run_once.command  # macOS: double-click these
-├── MAC-打不开就读我.txt                          # macOS: what to do if they won't open
+├── install.bat   / install.command   # one-click install (Windows / macOS)
+├── setup.bat     / setup.command     # change settings: opens the setup page
+├── doctor.bat    / doctor.command    # 15-item self-check
+├── start.bat     / start.command     # keep running (this is what drives 09:00 on Windows)
+├── run_once.bat  / run_once.command  # single sweep, then exit
+├── login_jobsdb.bat / login_linkedin.bat / login_indeed.bat   # one-time verification / login
+├── report_now.bat / notify_test.bat  # resend digest / test your push channel
+├── MAC-打不开就读我.txt              # macOS: what to do if they won't open
 ├── scripts/
 │   ├── common.sh                  # shared shell helpers for the .command scripts
 │   └── check_encoding.py          # guard against the line-ending / encoding class of bugs
