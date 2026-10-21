@@ -182,7 +182,8 @@ class AppConfig:
     """全量配置（含所有默认值，保证"缺配置也能跑基础命令"）。"""
 
     sources: dict[str, bool] = field(
-        default_factory=lambda: {"jobsdb": True, "linkedin": False, "indeed": False}
+        default_factory=lambda: {"jobsdb": True, "linkedin": False,
+                                 "indeed": False, "workday": True}
     )
     keywords: list[str] = field(
         # 刻意【不预置任何默认词】：关键词是「你想找什么」，只有用户自己知道，
@@ -218,7 +219,8 @@ class AppConfig:
     human_delay_min_s: float = 2.0
     human_delay_max_s: float = 8.0
     daily_limits: dict[str, int] = field(
-        default_factory=lambda: {"jobsdb": 60, "linkedin": 40, "indeed": 40}
+        default_factory=lambda: {"jobsdb": 60, "linkedin": 40, "indeed": 40,
+                                 "workday": 120}
     )
     browser_headless: bool = False
     cloudflare_wait_seconds: int = 45
@@ -232,6 +234,17 @@ class AppConfig:
     realtime_threshold: int = 80
     show_unscored: bool = True
     max_job_age_days: int = 2   # 岗位新鲜度上限：只保留最近 N 天内发布的岗位
+    # 推送时效线：**不能复核的站点**（LinkedIn）超过 N 天还没推出去就不再推，直接归档。
+    # 为什么需要它：max_job_age_days 只管「抓取入口」，已经进了库的岗位不会变旧。
+    # 为什么只对不能复核的站生效：年龄和「还能不能投」不是一回事。能打开详情页复核的
+    # 站（JobsDB / Indeed）以及接口直接给了 canApply 的 Workday，年龄不再是砍它的理由，
+    # 中间那段交给 liveness 逐条判断，只砍确认失效的。实测 14 天前的 JobsDB 岗位
+    # 10 条里 9 条仍在招，一律按 N 天砍会白扔机会。
+    report_max_age_days: int = 3
+    # 推送前复核：打开岗位详情页，看到「已过期 / 不再接受申请」就丢掉。
+    # 只对 Indeed / JobsDB 生效——LinkedIn 协议禁止机器人，本程序不点它的详情页。
+    # 关掉它只省时间，不影响其它功能。
+    liveness_check: bool = True
     notify: NotifyConfig = field(default_factory=NotifyConfig)
     feedback_poll_seconds: int = 60
     report_time: str = "09:00"
@@ -252,7 +265,8 @@ class AppConfig:
     # ------------------------------------------------------------------
     def enabled_sources(self) -> list[str]:
         """当前启用的抓取源列表（顺序固定，便于日志对照）。"""
-        return [s for s in ("jobsdb", "linkedin", "indeed") if self.sources.get(s, False)]
+        return [s for s in ("jobsdb", "linkedin", "indeed", "workday")
+                if self.sources.get(s, False)]
 
     def all_keywords(self) -> list[str]:
         """全部待抓取关键词 = 普通关键词 + 毕业生项目关键词（顺序：普通在前）。"""
@@ -495,6 +509,8 @@ def load_config(path: Path | None = None, *, require_runnable: bool = True) -> A
     cfg.realtime_threshold = int(raw.get("realtime_threshold", cfg.realtime_threshold))
     cfg.show_unscored = bool(raw.get("show_unscored", cfg.show_unscored))
     cfg.max_job_age_days = int(raw.get("max_job_age_days", cfg.max_job_age_days))
+    cfg.report_max_age_days = int(raw.get("report_max_age_days", cfg.report_max_age_days))
+    cfg.liveness_check = bool(raw.get("liveness_check", cfg.liveness_check))
 
     cfg.notify = _parse_notify(raw)
     cfg.feedback_poll_seconds = int(raw.get("feedback_poll_seconds", cfg.feedback_poll_seconds))
@@ -558,6 +574,9 @@ def _validate(cfg: AppConfig, *, require_runnable: bool = True) -> None:
         raise ConfigError("score_threshold / realtime_threshold 必须在 0-100 之间。")
     if cfg.max_job_age_days < 1:
         raise ConfigError("max_job_age_days 必须 >= 1（岗位新鲜度上限，单位天）。")
+    if cfg.report_max_age_days < 1:
+        raise ConfigError(
+            "report_max_age_days 必须 >= 1（不能复核的站点如 LinkedIn 的推送时效线，单位天）。")
     if cfg.realtime_threshold < cfg.score_threshold:
         raise ConfigError("realtime_threshold 应 >= score_threshold（实时推送的岗位必然进日报）。")
     # 推送通道名合法性：写错名字会让"配了却收不到"变成无声故障，不如启动即报错

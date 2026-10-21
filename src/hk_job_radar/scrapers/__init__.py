@@ -19,6 +19,7 @@ from hk_job_radar.scrapers.browser import BrowserManager
 from hk_job_radar.scrapers.indeed import IndeedScraper
 from hk_job_radar.scrapers.jobsdb import JobsDBScraper
 from hk_job_radar.scrapers.linkedin import LinkedInScraper
+from hk_job_radar.scrapers.workday import WorkdayScraper
 
 # 注册表：source 名 → 适配器类。
 # T04 已注册全部三站：在 config.yaml 的 sources 段把某项设为 true 即可启用。
@@ -27,6 +28,9 @@ SCRAPER_REGISTRY: dict[str, type[BaseScraper]] = {
     "jobsdb": JobsDBScraper,
     "linkedin": LinkedInScraper,
     "indeed": IndeedScraper,
+    # 雇主官网（Workday）：纯 HTTP 接口，不需要浏览器，是唯一自带
+    # 「是否还在收简历」字段的源，见 workday.py 顶部说明。
+    "workday": WorkdayScraper,
 }
 
 

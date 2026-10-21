@@ -20,6 +20,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import yaml
+
 _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
@@ -85,7 +87,8 @@ def _payload(**over: object) -> dict[str, object]:
         "keywords": "data analyst\nbusiness analyst",
         "graduate_keywords": "",
         "career_stage": "student",
-        "sources": {"jobsdb": True, "linkedin": False, "indeed": False},
+        "sources": {"jobsdb": True, "linkedin": False, "indeed": False,
+                    "workday": True},
         "channel": "telegram",
         "telegram_bot_token": "123456789:AAExampleTokenForTesting1234567890",
         "telegram_chat_id": "1234567891",
@@ -177,6 +180,22 @@ def test_render_roundtrip_matches_form():
                                         score_threshold=65, realtime_threshold=85))
     text = w.render_config_text(form)
     assert w.verify_config_text(text, form) == []
+
+
+def test_render_keeps_every_source_switch():
+    """回归用例：`_set_sources` 是**整块重写** sources 段。
+
+    它曾把站点名单写死在函数里，于是新增一个站点后，用户一进向导点保存，
+    那个站点的开关就被整块重写**静默删掉**——配置没报错，但从那天起不再抓了。
+    这里逐个站点验证「勾上的开关必须还在」。
+    """
+    for name in w.WIZARD_SOURCES:
+        sources = {n: n == name for n in w.WIZARD_SOURCES}
+        form = w.form_from_payload(_payload(sources=sources))
+        text = w.render_config_text(form)
+        raw = yaml.safe_load(text)
+        assert raw["sources"] == sources, f"{name} 的开关保存后丢了：{raw['sources']}"
+        assert w.verify_config_text(text, form) == []
 
 
 def test_render_keeps_template_comments():

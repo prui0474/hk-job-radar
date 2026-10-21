@@ -59,6 +59,15 @@ class JobPosting:
     direct_apply: bool = False       # 是否官网直投（Workday/Greenhouse/Lever）
     status: str = "new"              # new → reported → interested/rejected → applied
     first_seen_at: datetime = field(default_factory=now_hk)  # 首次发现时间
+    # 来源已明确告知「这个岗位还在收简历」（目前只有 Workday 的 canApply 字段能给）。
+    # 为 True 时允许它跳过「岗位新鲜度」那道年龄闸门——既然能确认还在招，
+    # 就不该因为挂得久被当成旧岗位扔掉。
+    verified_open: bool = False
+    # 资格提示：岗位里明确写出、而你可能不满足的条件（「须為香港永久居民」「粵語流利」等）。
+    # 空字符串 = 没发现。★ 它只用来**提示**，不参与任何过滤与打分——
+    # 有些门槛是硬的（永久居民身份），有些是软的（粤语可以边学边投），
+    # 能不能投只有本人判断得了，程序不替他做这个决定。
+    eligibility_note: str = ""
 
     @property
     def job_uid(self) -> str:
@@ -68,10 +77,13 @@ class JobPosting:
 
 @dataclass
 class ScoringResult:
-    """LLM 打分结果：强制 JSON 输出 {"score": 0-100, "reason": "..."}。"""
+    """LLM 打分结果：强制 JSON 输出 {"score": 0-100, "reason": "...", "eligibility": "..."}。"""
 
     score: int
     reason: str
+    # 岗位明确写出、而候选人可能不满足的条件；没发现就留空。
+    # 只做提示，绝不影响上面的 score——理由见 JobPosting.eligibility_note 的注释。
+    eligibility: str = ""
 
 
 @dataclass

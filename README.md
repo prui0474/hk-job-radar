@@ -75,8 +75,9 @@ flowchart LR
 1. **抓取** — 每个开启的站都按随机的人为延迟抓，并限制单站每日页数（防封号优先）。
 2. **初筛** — 先用关键词和同义词做便宜的匹配，把噪音丢掉，这样只有值得看的岗位才会
    送进大模型，省的是你自己的 API 钱。
-3. **打分** — DeepSeek 对着你的个人画像给每个岗位打 0–100 分；调用失败会降级处理，
-   不会把整条流水线卡死。
+3. **打分** — DeepSeek 对着你的个人画像给每个岗位打 0–100 分，顺带读一遍岗位写明的
+   准入条件（须为香港永久居民、要求粤语之类），作为提示标在卡片上——只提示、不扣分，
+   能不能投由你自己判断；调用失败会降级处理，不会把整条流水线卡死。
 4. **去重入库** — SQLite 用「岗位 ID + 归一化 URL」双键去重，保证同一个岗位不会被
    推第二遍。
 5. **推送** — 按分数排序的日报（电脑开着就 09:00 发，当天第一次开机也会补发）；
@@ -276,6 +277,8 @@ python run.py apply <job_uid>     # 投递副驾（半自动填表）
 | `daily_limits` | 单站每个香港自然日的页数上限 |
 | `location` | 目标地区，默认 Hong Kong |
 | `score_threshold` / `realtime_threshold` | 60 = 进日报的分数线；80 = 实时推送线（高级版） |
+| `max_job_age_days` / `report_max_age_days` | 2 = 只抓最近 2 天发布的；3 = **无法复核**的站点（LinkedIn）入库超过 3 天还没推出去就不再推送 |
+| `liveness_check` | 推送前打开详情页确认还在招（Indeed / JobsDB）。开启时能复核的站点不再按天数砍，只留 30 天硬上限 |
 | `report_time` | 日报时间（香港时间） |
 
 `data/profiles/profile.yaml` 的 `background:` 段是 AI 打分的依据，**必须换成你自己的**
@@ -403,8 +406,10 @@ flowchart LR
    per-site daily page cap (anti-ban first).
 2. **Filter** — cheap keyword + synonym matching drops noise so the LLM only sees
    worthwhile roles.
-3. **Score** — DeepSeek scores each role 0–100 against your profile; failures degrade
-   gracefully instead of blocking the pipeline.
+3. **Score** — DeepSeek scores each role 0–100 against your profile and also flags any
+   eligibility conditions the ad states outright (permanent-resident only, Cantonese
+   required, …) as a note on the card — a note only, never a deduction; whether to apply
+   stays your call. Failures degrade gracefully instead of blocking the pipeline.
 4. **Dedup + store** — SQLite double-key (job ID + normalized URL) guarantees no
    duplicate pushes.
 5. **Notify** — a digest sorted by score (09:00 if the PC is on, otherwise the first
@@ -624,6 +629,8 @@ Everything is in `config.yaml` (see `config.example.yaml` for commented defaults
 | `daily_limits` | per-site page cap per Hong Kong calendar day |
 | `location` | target region |
 | `score_threshold` / `realtime_threshold` | 60 = digest threshold, 80 = instant push (Pro) |
+| `max_job_age_days` / `report_max_age_days` | 2 = only scrape postings from the last 2 days; 3 = for sources that **cannot** be re-checked (LinkedIn), never push anything that has sat unpushed for 3 days |
+| `liveness_check` | open the job page before pushing to confirm it is still open (Indeed / JobsDB). While on, re-checkable sources are no longer cut by age — only a 30-day hard ceiling applies |
 | `report_time` | daily digest time (HK) |
 
 The `background` section of `data/profiles/profile.yaml` drives LLM scoring — **you must

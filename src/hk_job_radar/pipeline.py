@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -57,6 +58,10 @@ class Pipeline:
         self.notifier = Notifier.from_config(config, db)
         # LLM 延迟创建：创建依赖外部凭据，等真正用到再报错/降级
         self._llm: LLMScorer | None = None
+        # 浏览器是独占资源：同一个 user_data_dir 不能被两个 Chromium 同时打开
+        # （第二个会报 "profile in use"）。调度器的监控任务与日报任务是不同线程，
+        # 整点撞在一起时就会打架，所以这里串行化——日报要复核详情页也得排队。
+        self._browser_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # 懒加载组件
@@ -99,8 +104,9 @@ class Pipeline:
             logger.info(f"首次运行：进入回填模式（抓取最近 {self.config.max_job_age_days} 天在招岗位）")
         browser = BrowserManager(self.config)
         try:
-            for source in self.config.enabled_sources():
-                summary["sources"][source] = self._run_single_source(source, browser, cutoff)
+            with self._browser_lock:
+                for source in self.config.enabled_sources():
+                    summary["sources"][source] = self._run_single_source(source, browser, cutoff)
         finally:
             browser.close()   # 每轮周期结束必关浏览器，防进程泄漏
         # 汇总各站点的即时推送数（此前这个值一直是 0，`once` 打印的实时推送数
@@ -161,10 +167,13 @@ class Pipeline:
         """岗位新鲜度过滤：只保留最近 max_job_age_days 天发布的岗位。
 
         posted_at 为 None（时间解析失败）的岗位保留——宁可多看，不可漏看；
-        能解析出时间的岗位，过老的一律剔除，避免旧岗占用日报与 LLM 配额。
+        verified_open=True 的保留——那是来源明确告知「还在收简历」的岗位
+        （目前来自 Workday 的 canApply），能确认在招就不该按年龄砍掉。
+        能解析出时间的其余岗位，过老的一律剔除，避免旧岗占用日报与 LLM 配额。
         """
         age_cutoff = now_hk() - timedelta(days=self.config.max_job_age_days)
-        kept = [j for j in jobs if j.posted_at is None or j.posted_at >= age_cutoff]
+        kept = [j for j in jobs
+                if j.posted_at is None or j.verified_open or j.posted_at >= age_cutoff]
         if len(kept) < len(jobs):
             logger.info(f"新鲜度过滤：{len(jobs)} → {len(kept)}"
                         f"（剔除 {len(jobs) - len(kept)} 个超过 {self.config.max_job_age_days} 天的岗位）")
@@ -267,6 +276,92 @@ class Pipeline:
     # ------------------------------------------------------------------
     # 日报（每日 09:00 或 `hk_radar report now` 手动触发）
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # 日报取数与推送前复核
+    # ------------------------------------------------------------------
+    def _age_limits(self) -> dict:
+        """岗位年龄的两条线：能复核的站放宽带，不能复核的站卡紧线。
+
+        为什么要分两条：年龄和「还能不能投」根本不是一回事。实测 10 条 14 天前的
+        JobsDB 岗位里 9 条仍在招——按年龄一刀切等于白扔机会；反过来一条 2 天前就
+        撤下的广告，多留一天都是垃圾。所以「能查的交给查，查不了的才靠年龄兜」。
+
+        返回空字典 = 只有一条线（全部按 report_max_age_days 卡）。这不仅是「没开复核」
+        时的退化路径，也是必须的：不复核又放宽年龄，等于把一批早就招满的岗位
+        原样推给用户。
+        """
+        if not self.config.liveness_check:
+            return {}
+        from hk_job_radar import liveness      # 延迟导入：不开复核的用户不加载这段
+        return {
+            "recheckable_sources": liveness.RECHECKABLE_SOURCES,
+            "recheck_age_days": liveness.MAX_RECHECK_AGE_DAYS,
+        }
+
+    def _report_candidates(self) -> list[JobPosting]:
+        """取本轮真正要推的岗位。
+
+        为什么不是「直接取 reported=0」：那条 SQL 只看「推过没」和「分数够不够」，
+        完全不看岗位是不是还开着。电脑关几天再开，队列里会攒下一批早就招满的岗位，
+        一开日报就全推给用户——用户点进去看到「此職位已過期」。
+
+        三道闸门，只砍「确认失效」的：
+          1. 时效归档：只归档那些**注定推不出去**的——超过硬天花板（能复核的站 30 天、
+             不能复核的站 report_max_age_days）；
+          2. 时效过滤：SQL 层用同一套双轨年龄线再挡一次；
+          3. 存活复核：对能开详情页的站（JobsDB / Indeed）逐个看一眼，
+             看到「不再刊登 / 已过期 / 不再接受申请」才剔除，打不开一律放行。
+        """
+        days = self.config.report_max_age_days
+        limits = self._age_limits()
+        archived = self.db.archive_stale_jobs(days, **limits)
+        if archived:
+            logger.info(f"日报：{archived} 个岗位超过硬天花板仍未推送，已归档。")
+            self.db.log_event("system", "stale_archived",
+                              {"count": archived, "days": days, "limits": limits})
+
+        jobs = self.db.get_unreported_jobs(
+            self.config.score_threshold, self.config.show_unscored,
+            max_age_days=days, **limits)
+        if not jobs:
+            return []
+        return self._drop_closed_jobs(jobs)
+
+    def _drop_closed_jobs(self, jobs: list[JobPosting]) -> list[JobPosting]:
+        """推送前把「已经关了」的岗位剔掉（只查 Indeed / JobsDB）。
+
+        任何失败都必须放行：复核是为了少推垃圾，不是为了让推送失败。
+        所以浏览器起不来、页面打不开、过盾卡住，全部按「岗位还有效」处理。
+        """
+        if not self.config.liveness_check:
+            return jobs
+        from hk_job_radar import liveness      # 延迟导入：不开详情的用户不加载这段代码
+
+        try:
+            if not self._browser_lock.acquire(timeout=180):
+                logger.warning("推送前复核：浏览器被监控周期占用超过 180 秒，本轮跳过复核。")
+                return jobs
+            browser = None
+            try:
+                browser = BrowserManager(self.config)
+                result = liveness.check_jobs(jobs, browser)
+            finally:
+                if browser is not None:
+                    browser.close()
+                self._browser_lock.release()
+        except Exception as exc:
+            logger.warning(f"推送前复核失败（本轮按全部有效处理）：{exc}")
+            return jobs
+
+        if result.closed:
+            self.db.mark_closed([j.job_uid for j in result.closed])
+            logger.info(f"推送前复核：{len(result.closed)} 个岗位已过期或不再接受申请，已从本轮排除。")
+            self.db.log_event("system", "closed_dropped",
+                              {"count": len(result.closed),
+                               "uids": [j.job_uid for j in result.closed][:50]})
+        closed_uids = {j.job_uid for j in result.closed}
+        return [j for j in jobs if j.job_uid not in closed_uids]
+
     def run_daily_report(self, force: bool = False) -> bool:
         """汇总推送日报：取未报岗位 → 排版分页 → 发送 → 标记已报。
 
@@ -280,8 +375,7 @@ class Pipeline:
             logger.info("日报：今日已推送过，跳过（新岗位会累计到明天那份）。")
             return False
         try:
-            jobs = self.db.get_unreported_jobs(
-                self.config.score_threshold, self.config.show_unscored)
+            jobs = self._report_candidates()
             if not jobs:
                 # 注意：这里【不】写 report_sent_date —— 今天还没推过任何东西，
                 # 后面一旦有岗位就可以补发（否则今天这份日报就彻底没了）。
@@ -331,8 +425,13 @@ class Pipeline:
         fresh_session = gap_minutes > 120
         if not (past_report_time or fresh_session):
             return          # 还没到日报时间，交给定时任务
+        # 这里只做便宜的「有没有东西可推」判断（归档 + 计数），不打开详情页复核——
+        # 真正的复核在 run_daily_report 里做一次就够了，做两遍等于白花一倍时间。
+        limits = self._age_limits()
+        self.db.archive_stale_jobs(self.config.report_max_age_days, **limits)
         pending = self.db.get_unreported_jobs(
-            self.config.score_threshold, self.config.show_unscored)
+            self.config.score_threshold, self.config.show_unscored,
+            max_age_days=self.config.report_max_age_days, **limits)
         if not pending:
             return          # 暂时没岗位可推，等下一轮再看看（不标记已发）
         reason = "已过日报时间" if past_report_time else "跨了长时间关机后刚开机"
@@ -345,7 +444,7 @@ class Pipeline:
     def handle_feedback(self, job_uid: str, action: str) -> None:
         """Telegram 按钮回调落库 + 更新岗位状态。"""
         status_map = {"interested": "interested", "not_interested": "rejected",
-                      "clicked": "clicked"}
+                      "clicked": "clicked", "expired": "expired"}
         status = status_map.get(action)
         if status is None:
             logger.warning(f"未知反馈动作（忽略）：{action}")

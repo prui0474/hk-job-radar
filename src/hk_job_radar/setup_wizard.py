@@ -139,6 +139,21 @@ class _TemplateError(Exception):
 # ---------------------------------------------------------------------------
 # 表单数据模型
 # ---------------------------------------------------------------------------
+#: 向导里可勾选的抓取站点。★ 这是唯一名单：新增站点只改这一处，
+#: 解析 / 写回 / 探路模板 / 预览状态四处都会跟着变。
+#:
+#: 为什么必须是唯一名单：`_set_sources` 是「整块重写 sources 段」，
+#: 名单写死在四个地方时，只要漏掉写回那一处，用户一点保存，
+#: 新增站点的开关就会被整块重写**静默删掉**——配置文件看着没报错，
+#: 但从那天起那个源再也没抓过。这类「保存即丢失」最难排查。
+WIZARD_SOURCES: tuple[str, ...] = ("jobsdb", "linkedin", "indeed", "workday")
+
+#: 没有旧配置时，哪些站点默认开着。
+#: Workday 默认开：它是最稳的一条链路（纯 HTTP、无验证码、还能直接告诉
+#: 我们岗位是否还在招），关掉它没有任何好处。
+WIZARD_SOURCES_DEFAULT_ON = ("jobsdb", "workday")
+
+
 @dataclass
 class WizardForm:
     """向导收集到的全部输入（字段名与前端 JSON 一一对应，方便互相追溯）。"""
@@ -147,7 +162,8 @@ class WizardForm:
     graduate_keywords: list[str] = field(default_factory=list)
     career_stage: str = "student"
     sources: dict[str, bool] = field(
-        default_factory=lambda: {"jobsdb": True, "linkedin": False, "indeed": False}
+        default_factory=lambda: {n: n in WIZARD_SOURCES_DEFAULT_ON
+                                 for n in WIZARD_SOURCES}
     )
 
     channel: str = ""
@@ -229,10 +245,13 @@ def _clean_proxy(value: Any) -> str:
 def form_from_payload(payload: dict[str, Any]) -> WizardForm:
     """前端 JSON → WizardForm（做过类型收敛，脏数据不会带进下一步）。"""
     sources_raw = payload.get("sources") or {}
-    sources = {
-        name: bool(sources_raw.get(name, name == "jobsdb"))
-        for name in ("jobsdb", "linkedin", "indeed")
-    }
+    if sources_raw:
+        # 前端确实传了开关状态 → 没提到的站点按「关」处理。
+        # 不能按「默认开」处理：用户把三个站全关掉时，若 workday 被悄悄打开，
+        # 页面看着是「一个都没选」，实际却在抓某一家公司——静默违背用户意图。
+        sources = {name: bool(sources_raw.get(name, False)) for name in WIZARD_SOURCES}
+    else:
+        sources = {name: name in WIZARD_SOURCES_DEFAULT_ON for name in WIZARD_SOURCES}
     stage = str(payload.get("career_stage") or "student").strip().lower()
     if stage not in ("student", "graduate", "both"):
         stage = "student"
@@ -593,15 +612,18 @@ def _set_block_list(text: str, key: str, items: list[str], *, label: str,
 
 
 def _set_sources(text: str, sources: dict[str, bool]) -> str:
-    """整块重写 sources（三个站点开关）。
+    """整块重写 sources（各站点开关）。
 
     不用逐个 `_set_value` 的原因：`jobsdb:` 在 daily_limits 段里也出现一次，
-    逐个替换容易改错位置。整块替换只认 `sources:` 之后的连续三行，没有歧义。
+    逐个替换容易改错位置。整块替换只认 `sources:` 之后的连续若干行，没有歧义。
+
+    ★ 重写的名单必须来自 WIZARD_SOURCES，不能就地写几个名字：
+    这是**整块替换**，漏写一个站点等于把它从配置里删掉。
     """
     pattern = re.compile(r"^(sources:\n)((?:  [A-Za-z_]+:[^\n]*\n)*)", re.MULTILINE)
     body = "".join(
         f"  {name}: {_yaml_scalar(bool(sources.get(name, False)))}\n"
-        for name in ("jobsdb", "linkedin", "indeed")
+        for name in WIZARD_SOURCES
     )
     new_text, count = pattern.subn(lambda m: m.group(1) + body, text, count=1)
     if count != 1:
@@ -770,6 +792,7 @@ def _minimal_yaml() -> str:
         "  jobsdb: true\n"
         "  linkedin: false\n"
         "  indeed: false\n"
+        "  workday: true\n"
         "keywords: []\n"
         "graduate_keywords: []\n"
         "keyword_synonyms: {}\n"
@@ -783,6 +806,7 @@ def _minimal_yaml() -> str:
         "  jobsdb: 150\n"
         "  linkedin: 40\n"
         "  indeed: 40\n"
+        "  workday: 120\n"
         "keyword_rotation:\n"
         "  per_cycle: auto\n"
         "browser:\n"
@@ -1090,7 +1114,7 @@ def current_state() -> dict[str, Any]:
         # 「请改掉这些词」的提醒。空手打开向导的人需要的是起点，不是空白。
         "keywords_are_samples": False,
         "career_stage": "student",
-        "sources": {"jobsdb": True, "linkedin": False, "indeed": False},
+        "sources": {n: n in WIZARD_SOURCES_DEFAULT_ON for n in WIZARD_SOURCES},
         "channel": "",
         "report_time": "09:00",
         "score_threshold": 60,

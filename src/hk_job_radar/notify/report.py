@@ -29,6 +29,44 @@ def _score_badge(job: JobPosting) -> str:
     return f"{star} {job.llm_score} 分"
 
 
+def _age_line(job: JobPosting) -> str:
+    """「这条岗位多旧了」——用户判断值不值得点的重要依据，当天的不显示。
+
+    优先用发布日；Indeed 的列表页不展示发布时间，那类岗位只能退化成
+    「第一次被抓到的时间」，所以文案也跟着从「发布」改成「发现」——
+    不能让用户以为那就是真实发布时间。
+    """
+    if job.posted_at:
+        delta, kind = now_hk() - job.posted_at, "发布"
+    else:
+        delta, kind = now_hk() - job.first_seen_at, "发现"
+    days = delta.days
+    if days < 1:
+        return ""
+    if days == 1:
+        return f"🕒 昨天{kind}"
+    return f"🕒 {days} 天前{kind}"
+
+
+def _eligibility_line(job: JobPosting) -> str:
+    """资格提示那一行（没发现条件就返回空串，由调用方过滤掉）。
+
+    ★ 只提示、不拦人。程序不做「这个岗位你别投」的判断：
+      - 🚫 硬性身份限制（须為香港永久居民之类）——短期确实无解，标得重一点；
+      - ⚠️ 可争取的条件（粤语水平、工作年限、证书）——有的是余地，
+        愿不愿意试只有本人知道。
+    两种都照样进日报，分数也一分不扣。
+    """
+    note = (job.eligibility_note or "").strip()
+    if not note:
+        return ""
+    if note.startswith("[硬]"):
+        return f"🚫 门槛：{note[3:].strip()}"
+    if note.startswith("[软]"):
+        return f"⚠️ 门槛：{note[3:].strip()}"
+    return f"⚠️ 门槛：{note}"      # 老数据或格式异常，按软性处理
+
+
 def build_job_card(job: JobPosting, index: int | None = None) -> str:
     """单张岗位卡片（日报与实时推送共用同一种排版，用户认知负担最小）。
 
@@ -39,6 +77,8 @@ def build_job_card(job: JobPosting, index: int | None = None) -> str:
         + ("  · 官网直投 🏠" if job.direct_apply else ""),
         job.title,
         " · ".join(x for x in (job.company, job.location, job.salary_text) if x),
+        _age_line(job),
+        _eligibility_line(job),
         f"理由：{job.llm_reason}" if job.llm_reason else "",
         f"关键词：{job.keyword_matched}" if job.keyword_matched else "",
         f"🔗 {job.url}",
@@ -110,6 +150,10 @@ def build_feedback_row(job: JobPosting, index: int | None = None) -> list[dict]:
     return [
         {"text": f"✅ 感兴趣{tag}", "callback_data": f"fb:{job.job_uid}:interested"},
         {"text": f"❌ 不感兴趣{tag}", "callback_data": f"fb:{job.job_uid}:not_interested"},
+        # 第三个按钮让用户一键告诉我们「这个已经关了」：既清掉这条记录，
+        # 也是「哪个站点漏掉过期岗位」的唯一可靠信号来源（详情页文案会变，
+        # 但用户的眼睛不会）。
+        {"text": f"🚫 已关闭{tag}", "callback_data": f"fb:{job.job_uid}:expired"},
     ]
 
 
@@ -157,6 +201,20 @@ def build_html_card(job: JobPosting) -> str:
     ]
     if meta:
         rows.append(f'<div style="font-size:13px;color:#5f6368;margin:0 0 6px 0;">{_esc(meta)}</div>')
+    age = _age_line(job)
+    if age:
+        rows.append(f'<div style="font-size:12px;color:#888780;margin:0 0 6px 0;">{_esc(age)}</div>')
+    note = (job.eligibility_note or "").strip()
+    if note:
+        # 硬性身份门槛用红、可争取的条件用黄——同样只提示，不替用户做决定
+        is_hard = note.startswith("[硬]")
+        body = note[3:].strip() if note.startswith(("[硬]", "[软]")) else note
+        bg, fg, label = (("#FDECEA", "#B3261E", "身份门槛") if is_hard
+                         else ("#FFF8E1", "#8A6D00", "条件门槛"))
+        rows.append(
+            f'<div style="font-size:12px;color:{fg};background:{bg};'
+            f'border-radius:6px;padding:6px 10px;margin:0 0 6px 0;">'
+            f'<b style="font-weight:600;">{label}</b>：{_esc(body)}</div>')
     if job.llm_reason:
         rows.append(
             f'<div style="font-size:13px;color:#1f2328;background:#F1EFE8;'

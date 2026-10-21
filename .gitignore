@@ -4,6 +4,10 @@ data/*
 !data/profiles/
 data/profiles/*
 !data/profiles/profile.example.yaml
+# 企业官网（Workday）雇主清单：真实的 workday_employers.yaml 是个人目标公司名单，
+# 不进 git；只提交格式示例，让新用户知道怎么加自己的公司。
+data/workday_employers.yaml
+!data/workday_employers.example.yaml
 
 # 真实配置（含 token），只提交模板 config.example.yaml
 config.yaml

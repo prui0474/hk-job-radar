@@ -1,0 +1,48 @@
+# =====================================================================
+# 企业官网（Workday）雇主清单 · 格式示例
+# 想加自己的目标公司，把本文件复制成同目录下的 workday_employers.yaml 再改。
+# （本文件只是示例，程序不读它；程序读的是 workday_employers.yaml）
+#
+# 怎么凑出下面三行——打开公司招聘页，看地址栏，形状是：
+#     https://[tenant].wd[1|3|5].myworkdayjobs.com/[site]
+#              ↑ tenant                            ↑ site
+#   base_url 写协议 + 域名（不含后面的路径）
+#   tenant   写域名最前面那一段
+#   site     写域名后面那段路径（大小写敏感，别改）
+#
+# 不确定这家公司用不用 Workday？
+#   随便填一组 tenant / site 去试，服务器返回 422 = 它确实在用 Workday，
+#   只是参数没猜对；返回 404/其它 = 大概不是 Workday 系统。
+#   本程序里这个报错会写成一句人话提醒你去核对，不会静默失败。
+#
+# 三个字段都对上了还有一个可能：这家公司的招聘系统里根本没有香港岗位。
+# 那不算配置错，程序只会安静地返回 0 条。
+# =====================================================================
+employers:
+
+  # ── 下面五家是程序内置的，这里写出来只为示范格式 ──
+  # 你在本文件里写同名 key 会【逐条覆盖】内置值：
+  # 只写 enabled: false 就能关掉内置那家，不必把 name/base_url 抄一遍。
+  manulife:
+    name: "Manulife（宏利）"
+    base_url: "https://manulife.wd3.myworkdayjobs.com"
+    tenant: "manulife"
+    site: "MFCJH_Jobs"
+
+  sunlife:
+    name: "Sun Life（永明）"
+    base_url: "https://sunlife.wd3.myworkdayjobs.com"
+    tenant: "sunlife"
+    site: "Experienced-Jobs"
+
+  # ── 下面这样加一家你自己的目标公司 ──
+  myshop:
+    name: "我的目标公司"
+    base_url: "https://myshop.wd3.myworkdayjobs.com"
+    tenant: "myshop"
+    site: "External"
+    # enabled: false      # 暂时不想抓就写这一行，不用删整段
+
+  # ── 不想再抓内置的某一家，这样写一行就够 ──
+  # cncbi:
+  #   enabled: false

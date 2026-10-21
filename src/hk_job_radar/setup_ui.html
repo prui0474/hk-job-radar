@@ -225,12 +225,18 @@
           <label class="switch" data-name="jobsdb"><input type="checkbox" id="src_jobsdb">JobsDB</label>
           <label class="switch" data-name="linkedin"><input type="checkbox" id="src_linkedin">LinkedIn</label>
           <label class="switch" data-name="indeed"><input type="checkbox" id="src_indeed">Indeed</label>
+          <label class="switch" data-name="workday"><input type="checkbox" id="src_workday">企业官网（Workday）</label>
         </div>
         <p class="hint">
           建议先只开 JobsDB，跑顺了再开第二个。LinkedIn 对自动化最敏感，
           首次使用要先双击 <code class="inl">login_linkedin.bat</code>
           （Mac 上是 <code class="inl">login_linkedin.command</code>）用求职小号登录，
           否则会被拦到登录页。
+        </p>
+        <p class="hint">
+          「企业官网（Workday）」不用登录、不用过人机验证，直接从公司自己的招聘系统
+          读岗位，还能顺便确认岗位是否仍在收简历。默认内置几家香港机构，
+          想加自己的目标公司，改 <code class="inl">data/workday_employers.yaml</code> 就行。
         </p>
       </div>
     </div>
@@ -572,7 +578,8 @@
       sources: {
         jobsdb: $("src_jobsdb").checked,
         linkedin: $("src_linkedin").checked,
-        indeed: $("src_indeed").checked
+        indeed: $("src_indeed").checked,
+        workday: $("src_workday").checked
       },
       channel: channel,
       wecom_webhook: $("wecom_webhook").value,
@@ -693,6 +700,7 @@
     $("src_jobsdb").checked = !!(s.sources || {}).jobsdb;
     $("src_linkedin").checked = !!(s.sources || {}).linkedin;
     $("src_indeed").checked = !!(s.sources || {}).indeed;
+    $("src_workday").checked = !!(s.sources || {}).workday;
     setChannel(s.channel || "");
     setProxy(s.browser_proxy || "");
 

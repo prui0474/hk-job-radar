@@ -48,6 +48,9 @@ background: |
 
   LANGUAGES
   - <Language list, e.g. Mandarin (native), English (fluent)>.
+  - 正在学的语言也要写上当前水平，例如 "Cantonese (basic, actively learning)"。
+    程序只会把岗位的语言要求当作【提示】标在卡片上，不会因此扣分、也不会过滤——
+    写清楚了你才能一眼看到「这一条要求粤语，我现在的水平够不够试」。
 
   WORK AUTHORIZATION (important for screening questions)
   - Currently on a Hong Kong STUDENT VISA.

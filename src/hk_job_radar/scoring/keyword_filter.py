@@ -76,6 +76,19 @@ class KeywordFilter:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
         self.synonyms = self.load_synonyms()
+        #: 短词（≤4 个纯字母/数字）不能当裸子串匹配。
+        #: 实测踩过：关键词 "llm" 匹配到了 "fu**llm**ent"（fulfillment），
+        #: 于是一条「Senior Manager, Sales Support」被判成 AI 岗推进日报。
+        #: 这类词只有 3 个字母，嵌在别的单词里几乎是必然，必须加词首边界。
+        #: 用「词首」而不是「两端」边界：`\bllm` 仍能命中 "LLMs"、"LLM-powered"，
+        #: 而 "fulfillment" 里那个 llm 前面不是词边界，会被挡掉。
+        self._short_keywords = {
+            kw for kw in config.all_keywords()
+            if len(kw) <= 4 and kw.isascii() and kw.isalnum()
+        }
+        self._short_patterns = {
+            kw: re.compile(r"\b" + re.escape(kw), re.I) for kw in self._short_keywords
+        }
 
     # ------------------------------------------------------------------
     def load_synonyms(self) -> dict[str, list[str]]:
@@ -144,6 +157,13 @@ class KeywordFilter:
             return "full time"
         return ""
 
+    def _contains(self, haystack: str, keyword: str) -> bool:
+        """haystack 里有没有这个关键词（短词走词首边界，其余直接子串）。"""
+        pattern = self._short_patterns.get(keyword)
+        if pattern is not None:
+            return bool(pattern.search(haystack))
+        return keyword in haystack
+
     def _match(self, haystack: str) -> str:
         """返回命中的主关键词（主词优先于同义词返回）；未命中返回空串。
 
@@ -151,13 +171,13 @@ class KeywordFilter:
         （config.graduate_keywords），后者是毕业后入职的全职岗，属合法投递范围。
         """
         for keyword in self.config.keywords:
-            if keyword in haystack:
+            if self._contains(haystack, keyword):
                 return keyword
         for keyword in self.config.graduate_keywords:
-            if keyword in haystack:
+            if self._contains(haystack, keyword):
                 return keyword
         for main_kw, variants in self.synonyms.items():
             for variant in variants:
-                if variant and variant in haystack:
+                if variant and self._contains(haystack, variant):
                     return f"{main_kw}（同义词: {variant}）"
         return ""
