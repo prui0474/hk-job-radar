@@ -14,6 +14,7 @@ from __future__ import annotations
 import html
 from datetime import datetime
 
+from hk_job_radar.dedup import annotate_duplicates
 from hk_job_radar.models import JobPosting, now_hk
 
 # 单页字符预算：4096 上限减去按钮 JSON、换行余量，实际按卡片边界切
@@ -79,6 +80,9 @@ def build_job_card(job: JobPosting, index: int | None = None) -> str:
         " · ".join(x for x in (job.company, job.location, job.salary_text) if x),
         _age_line(job),
         _eligibility_line(job),
+        # 跨站重复：同一个岗位挂在两个站，两条都在列表里，标出「另见」让用户
+        # 自己挑 JD 更全的那条。序号是全局的，跨页也指得准。
+        job.duplicate_note,
         f"理由：{job.llm_reason}" if job.llm_reason else "",
         f"关键词：{job.keyword_matched}" if job.keyword_matched else "",
         f"🔗 {job.url}",
@@ -112,6 +116,10 @@ def build_daily_report(jobs: list[JobPosting], show_unscored: bool = True
 
     # 全局序号跨页连续，用户回看时报"第 7 个"没有歧义
     ordered = sorted(jobs, key=lambda j: (j.llm_score is None, -(j.llm_score or 0)))
+    # 跨站重复标注必须在分页之前做：序号是全局的，「另见 #3」跨页也指得准
+    duplicates = annotate_duplicates(ordered)
+    if duplicates:
+        header += f"（其中 {duplicates} 个与列表中其他条目是同一岗位）\n"
     pages: list[str] = []
     keyboards: list[list[list[dict]]] = []
     current = header
@@ -167,7 +175,7 @@ def build_feedback_keyboard(job: JobPosting) -> list[list[dict]]:
 #
 # 为什么单独做一套：文本通道只能发纯文本，而邮件可以发 HTML。同一份岗位数据，
 # 用 HTML 排成「卡片」，在手机上看起来就像一个小程序界面——这是邮件通道最大
-# 的价值，也是「高级版更精致」这条产品线的第一块砖。
+# 的价值——不用装任何客户端，收件箱里就是一张能点的岗位卡片。
 #
 # 排版约定（邮件客户端的坑）：
 # - 只用**内联 style**：QQ / 网易 / Gmail 都会剥掉 <style> 标签里的规则；

@@ -100,9 +100,8 @@ class EmailConfig:
 class NotifyConfig:
     """推送总配置。
 
-    channels 是「要启用哪些通道」的列表，顺序就是用户的选择顺序——
-    免费版只保留第一个（见 tier.apply_free_limits），高级版可以全开。
-    四个通道完全平等，系统不预设谁优先。
+    channels 是「要启用哪些通道」的列表：写几个就发几个，每份日报/每次秒推
+    会同时送到所有已启用的通道。四个通道完全平等，系统不预设谁优先。
     """
     channels: list[str] = field(default_factory=list)
     telegram: TelegramConfig = field(default_factory=TelegramConfig)
@@ -248,13 +247,16 @@ class AppConfig:
     notify: NotifyConfig = field(default_factory=NotifyConfig)
     feedback_poll_seconds: int = 60
     report_time: str = "09:00"
-    # 高级版可配多个日报时间点；免费版只认上面的 report_time（每天 1 次），
-    # 具体由 tier.effective_report_times() 决定，这里只负责把配置读进来。
+    # 想一天发几份就写几个时间点（如 ["09:00", "18:30"]）；
+    # 留空＝只用上面的 report_time。见 scheduler 里的日报调度。
     report_times: list[str] = field(default_factory=list)
     # 求职阶段：student / graduate / both（决定抓哪些岗位类型，见下方 career_stage 常量）
     career_stage: str = "student"
-    # 免费版限制的提示语（由 tier.apply_free_limits 填充，供 UI/CLI 展示）
-    tier_notes: list[str] = field(default_factory=list)
+    # 简历路径（简历-JD 差距分析与面试预测用）。
+    # 留空＝不用这个功能——抓取、打分、日报完全不受影响，这是刻意的：
+    # 不是每个人都会把简历放进这个工具里。
+    # 相对路径按 config.yaml 所在目录解析（见 resolve_resume_path）。
+    resume_path: str = ""
 
     # ------------------------------------------------------------------
     @property
@@ -271,6 +273,21 @@ class AppConfig:
     def all_keywords(self) -> list[str]:
         """全部待抓取关键词 = 普通关键词 + 毕业生项目关键词（顺序：普通在前）。"""
         return self.keywords + self.graduate_keywords
+
+    def resolve_resume_path(self, base: Path | None = None) -> Path | None:
+        """把 resume_path 解析成绝对路径；没配就返回 None。
+
+        相对路径按 `base`（默认 config.yaml 所在目录）解析，而不是按当前工作
+        目录——用户在不同目录下敲 `run.py match` 时，相对路径不该有时找得到、
+        有时找不到。
+        """
+        raw = (self.resume_path or "").strip()
+        if not raw:
+            return None
+        p = Path(raw).expanduser()
+        if p.is_absolute():
+            return p
+        return (base or CONFIG_PATH.parent) / p
 
     def job_types_for_keyword(self, keyword: str) -> list[str]:
         """某关键词搜索时应使用的岗位类型过滤。
@@ -462,6 +479,9 @@ def load_config(path: Path | None = None, *, require_runnable: bool = True) -> A
     # 求职阶段决定「抓哪些岗位类型」。优先级：显式写 job_types > 用 career_stage 推导。
     # 保留显式 job_types 是为了不挡住高级用户（懂的人可以直接写类型列表）。
     cfg.career_stage = _normalize_career_stage(raw.get("career_stage"))
+    # 简历路径只影响「差距分析」一个功能，所以这里不做任何校验：
+    # 路径写错不该让抓取/日报起不来，报错留到真正要用它的那一刻（match 命令）。
+    cfg.resume_path = str(raw.get("resume_path") or "").strip()
     if raw.get("job_types") is not None:
         cfg.job_types = [str(j).strip().lower() for j in (raw.get("job_types") or [])
                          if str(j).strip()]
@@ -518,11 +538,6 @@ def load_config(path: Path | None = None, *, require_runnable: bool = True) -> A
     cfg.report_times = [str(t).strip() for t in (raw.get("report_times") or []) if str(t).strip()]
 
     _validate(cfg, require_runnable=require_runnable)
-
-    # 免费版额度裁剪（延迟导入：tier 需要 config 的 PROJECT_ROOT，模块级导入会成环）
-    from hk_job_radar import tier
-    cfg.tier_notes = tier.apply_free_limits(cfg)
-    tier.log_limits(cfg.tier_notes)
     return cfg
 
 
@@ -580,13 +595,13 @@ def _validate(cfg: AppConfig, *, require_runnable: bool = True) -> None:
     if cfg.realtime_threshold < cfg.score_threshold:
         raise ConfigError("realtime_threshold 应 >= score_threshold（实时推送的岗位必然进日报）。")
     # 推送通道名合法性：写错名字会让"配了却收不到"变成无声故障，不如启动即报错
-    from hk_job_radar import tier   # 延迟导入避免循环依赖
-    unknown = [c for c in (cfg.notify.channels or []) if c not in tier.VALID_CHANNELS]
+    from hk_job_radar import channels   # 延迟导入避免循环依赖
+    unknown = [c for c in (cfg.notify.channels or []) if c not in channels.VALID_CHANNELS]
     if unknown:
         raise ConfigError(
             f"notify.channels 里有无法识别的通道名：{unknown}。"
-            f"可选值为 {' / '.join(tier.VALID_CHANNELS)}。")
-    # 高级版的多时间点日报；格式写错时静默失效最难查，所以逐个校验
+            f"可选值为 {' / '.join(channels.VALID_CHANNELS)}。")
+    # 多个日报时间点；格式写错时静默失效最难查，所以逐个校验
     for t in cfg.report_times:
         if not re.fullmatch(r"\d{1,2}:\d{2}", t):
             raise ConfigError(f"report_times 里的「{t}」格式错误，应为 HH:MM，如 09:00、18:30。")
@@ -599,14 +614,14 @@ def require_notify(cfg: AppConfig) -> None:
     默默跑完、什么都不发——用户等了半天，还以为在正常工作。所以这里提前
     拦住，并用中文告诉他"差什么、去哪里拿"。
     """
-    from hk_job_radar import tier
+    from hk_job_radar import channels
     from hk_job_radar.notify.dispatch import build_channel
 
     names = list(cfg.notify.channels or [])
     if not names:
         raise ConfigError(
             "还没有启用任何推送通道：请在 config.yaml 的 notify.channels 里写一个，"
-            f"可选 {' / '.join(tier.VALID_CHANNELS)}（四者完全平等，任选其一）。\n"
+            f"可选 {' / '.join(channels.VALID_CHANNELS)}（四者完全平等，任选其一）。\n"
             + _channel_setup_hint())
 
     problems: list[str] = []
@@ -618,7 +633,7 @@ def require_notify(cfg: AppConfig) -> None:
         ok, message = channel.check()
         if ok:
             return          # 有一个通道可用就够了，直接放行
-        problems.append(f"{tier.channel_label(name)} —— {message}")
+        problems.append(f"{channels.channel_label(name)} —— {message}")
 
     raise ConfigError(
         "已启用的推送通道都还没配好，消息发不出去：\n  · "

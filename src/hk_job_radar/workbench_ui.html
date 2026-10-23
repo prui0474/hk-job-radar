@@ -1,0 +1,769 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>岗位工作台 · 香港岗位雷达</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#fff; --text:#1b1f24; --muted:#6b7280;
+    --line:#e4e7ec; --accent:#2563eb; --accent-soft:#eef3ff;
+    --ok:#0f766e; --ok-soft:#e6f5f2; --warn:#a16207; --warn-soft:#fdf6e3;
+    --danger:#b42318; --danger-soft:#fdeceb; --shadow:0 1px 2px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#101218; --card:#181b23; --text:#e7e9ee; --muted:#98a1ae;
+      --line:#282d38; --accent:#7aa2ff; --accent-soft:#1b2437;
+      --ok:#5ee0c8; --ok-soft:#15312d; --warn:#e5b567; --warn-soft:#2f2617;
+      --danger:#ff8a7a; --danger-soft:#331d1b; --shadow:0 1px 2px rgba(0,0,0,.4);
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+  }
+  header{
+    position:sticky; top:0; z-index:10; background:var(--bg);
+    border-bottom:1px solid var(--line); padding:18px 24px 12px;
+  }
+  .headline{display:flex; align-items:baseline; gap:14px; flex-wrap:wrap}
+  h1{font-size:17px; margin:0; letter-spacing:.2px}
+  .sub{color:var(--muted); font-size:13px}
+  .toolbar{display:flex; gap:10px; align-items:center; margin-top:12px; flex-wrap:wrap}
+  .tabs{display:flex; gap:6px; flex-wrap:wrap}
+  .tab{
+    border:1px solid var(--line); background:var(--card); color:var(--muted);
+    border-radius:999px; padding:5px 13px; font-size:13px; cursor:pointer;
+    transition:.15s; font-family:inherit;
+  }
+  .tab:hover{color:var(--text)}
+  .tab.on{background:var(--accent); border-color:var(--accent); color:#fff}
+  @media (prefers-color-scheme:dark){ .tab.on{color:#0d1117} }
+  .tab .n{opacity:.7; margin-left:4px; font-variant-numeric:tabular-nums}
+  input[type=search]{
+    flex:1 1 180px; max-width:280px; padding:6px 12px; font-size:13px;
+    border:1px solid var(--line); border-radius:999px; background:var(--card);
+    color:var(--text); font-family:inherit;
+  }
+  input[type=search]:focus{outline:2px solid var(--accent-soft); border-color:var(--accent)}
+  select{
+    padding:6px 10px; font-size:13px; border:1px solid var(--line); border-radius:999px;
+    background:var(--card); color:var(--text); font-family:inherit; cursor:pointer;
+    max-width:200px;
+  }
+  select:focus{outline:2px solid var(--accent-soft); border-color:var(--accent)}
+  main{padding:18px 24px 60px; display:grid; gap:14px;
+       grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); align-items:start}
+  .card{
+    background:var(--card); border:1px solid var(--line); border-radius:12px;
+    padding:14px 16px 12px; box-shadow:var(--shadow); transition:.18s;
+  }
+  .card.gone{opacity:0; transform:scale(.97)}
+  .top{display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap}
+  .score{
+    font-variant-numeric:tabular-nums; font-weight:700; font-size:13px;
+    padding:2px 8px; border-radius:6px; background:var(--bg); color:var(--muted);
+  }
+  .score.high{background:var(--accent-soft); color:var(--accent)}
+  .score.mid{background:var(--ok-soft); color:var(--ok)}
+  .src{font-size:12px; color:var(--muted); text-transform:capitalize}
+  .chip{font-size:12px; padding:1px 8px; border-radius:999px;
+        background:var(--bg); color:var(--muted); border:1px solid var(--line)}
+  .chip.dup{background:var(--warn-soft); color:var(--warn); border-color:transparent}
+  /* 综合分：只在「综合排序」下出现，紧跟在分数后面，专门解释
+     「为什么 82 分排在 88 分前面」。刻意用**描边**而不是填色——填色蓝
+     和「已投」状态徽章长得一样，一眼分不清哪个是状态、哪个是算出来的数。 */
+  .chip.smart{background:transparent; color:var(--accent); border-color:var(--accent);
+              font-variant-numeric:tabular-nums}
+  /* 当前状态徽章：和分数挨在一起，让人先看清「这条现在是什么状态」，
+     再往下看底部那排按钮——否则第一个按钮长得就像一枚状态标签。 */
+  .chip.st{background:var(--accent-soft); color:var(--accent); border-color:transparent}
+  .chip.st.ok{background:var(--ok-soft); color:var(--ok)}
+  .chip.st.plain{background:var(--bg); color:var(--muted)}
+  .card h3{font-size:16px; margin:2px 0 4px; line-height:1.45; word-break:break-word}
+  .meta{font-size:13px; color:var(--muted); margin-bottom:6px}
+  .line{font-size:13px; margin:4px 0}
+  .age{color:var(--muted)}
+  .elig{font-size:13px; padding:6px 10px; border-radius:8px; margin:6px 0}
+  .elig.hard{background:var(--danger-soft); color:var(--danger)}
+  .elig.soft{background:var(--warn-soft); color:var(--warn)}
+  .reason{font-size:13.5px; margin:6px 0 2px}
+  details{margin:6px 0 10px}
+  summary{cursor:pointer; font-size:13px; color:var(--muted)}
+  details p{font-size:13px; color:var(--muted); white-space:pre-wrap; margin:8px 0 0;
+            max-height:220px; overflow:auto; padding-right:4px}
+  .actions{display:flex; gap:5px; flex-wrap:wrap; align-items:center;
+           border-top:1px dashed var(--line); padding-top:10px; margin-top:6px}
+  .actions button{
+    font-family:inherit; font-size:13px; padding:5px 10px; border-radius:7px;
+    border:1px solid var(--line); background:var(--card); color:var(--text);
+    cursor:pointer; transition:.15s;
+  }
+  .actions button:hover{border-color:var(--accent); color:var(--accent)}
+  /* 四个按钮不加底色：有底色时第一个（已投）看着像一枚「状态徽章」，
+     用户会以为卡片已经被标成已投了。改用「标记为」前缀 + 加粗来区分主次。 */
+  .actions button.b-main{font-weight:600; color:var(--accent)}
+  /* 这行前缀要够窄：340px 的窄卡片里，它一宽就会把「打开原链接」挤到第二行。 */
+  .act-lead{font-size:11.5px; color:var(--muted); margin-right:0; user-select:none}
+  /* 撤销排在四个按钮之后、链接之前：窄卡片放不下时整体换行，
+     链接靠 margin-left:auto 仍然贴右边，不会孤零零留在左侧。 */
+  .actions button.b-undo{color:var(--muted); border-style:dashed}
+  .actions button.b-undo:hover{border-style:solid}
+  .actions a{font-size:13px; color:var(--accent); text-decoration:none; margin-left:auto}
+  .actions a:hover{text-decoration:underline}
+  .empty{grid-column:1/-1; text-align:center; color:var(--muted);
+         padding:70px 20px; font-size:14px; line-height:2}
+  .toast{
+    position:fixed; left:50%; bottom:28px; transform:translate(-50%,20px);
+    background:#1b1f24; color:#fff; padding:9px 18px; border-radius:999px;
+    font-size:13px; opacity:0; pointer-events:none; transition:.25s; z-index:50;
+  }
+  .toast.on{opacity:1; transform:translate(-50%,0)}
+  .toast.err{background:var(--danger)}
+  /* ---- 旧版进程提示 ---- */
+  /* 页面每次刷新都从磁盘重读，所以界面永远是最新的；但后台的 Python 代码
+     是启动那一刻装进内存的。两者版本不一致时，用户会看到新按钮点了没反应，
+     然后以为是坏了。这条黄条专门说清楚这件事。 */
+  #stale{
+    display:none; margin:14px 24px 0; padding:11px 15px; border-radius:10px;
+    background:var(--warn-soft); color:var(--warn); font-size:13px; line-height:1.8;
+  }
+  #stale.on{display:block}
+  #stale b{font-weight:600}
+  /* ---- 同步已投（P3.5）---- */
+  /* 同步要几十秒，结果又不能只用一句 toast 打发（它会说「有 4 条对不上」），
+     所以留一条可点掉的横条，把摘要和明细一起写在这里。 */
+  #syncNote{
+    display:none; margin:14px 24px 0; padding:11px 15px; border-radius:10px;
+    background:var(--ok-soft); color:var(--ok); font-size:13px; line-height:1.85;
+    white-space:pre-wrap; cursor:pointer;
+  }
+  #syncNote.on{display:block}
+  #syncNote.bad{background:var(--warn-soft); color:var(--warn)}
+  /* ---- 进度面板（P3）---- */
+  #insights{
+    margin:16px 24px 0; background:var(--card); border:1px solid var(--line);
+    border-radius:12px; padding:16px 18px 18px; box-shadow:var(--shadow);
+  }
+  #insights[hidden]{display:none}
+  .kpis{display:flex; gap:26px; flex-wrap:wrap; margin-bottom:14px}
+  .kpi{display:flex; flex-direction:column; gap:1px}
+  .kpi b{font-size:22px; font-variant-numeric:tabular-nums; line-height:1.25}
+  .kpi span{font-size:12px; color:var(--muted)}
+  .charts{display:grid; gap:20px; grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+  .chart-box h4{margin:0 0 8px; font-size:13px; color:var(--muted); font-weight:600}
+  .chart-box svg{display:block; max-width:100%; height:auto}
+  .tbl{width:100%; border-collapse:collapse; font-size:13px; margin-top:14px;
+       font-variant-numeric:tabular-nums}
+  .tbl th,.tbl td{border-bottom:1px solid var(--line); padding:6px 8px; text-align:right}
+  .tbl th:first-child,.tbl td:first-child{text-align:left}
+  .tbl th{color:var(--muted); font-weight:600}
+  .hint{font-size:12px; color:var(--muted); margin:10px 0 0; line-height:1.75}
+  /* ---- 导出（P5）---- */
+  .export{
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    margin-top:14px; padding-top:12px; border-top:1px dashed var(--line);
+  }
+  .export a{font-size:13px; color:var(--accent); text-decoration:none}
+  .export a:hover{text-decoration:underline}
+  .export code{
+    font-family:ui-monospace,Consolas,monospace; font-size:12px;
+    background:var(--accent-soft); padding:1px 5px; border-radius:5px; color:var(--text);
+  }
+  /* ---- 简历分析（P4）---- */
+  .an-btn{
+    margin-left:auto; font-family:inherit; font-size:12.5px; cursor:pointer;
+    padding:3px 10px; border-radius:7px; border:1px dashed var(--line);
+    background:transparent; color:var(--muted); transition:.15s;
+  }
+  .an-btn:hover{color:var(--accent); border-color:var(--accent); border-style:solid}
+  .an-btn[disabled]{opacity:.55; cursor:default}
+  /* 「投递」比「分析」更往前一步：填的是要发给雇主的表单，所以给它实边框的
+     强调色。不加填色——填色会跟顶部的状态徽章抢注意力。 */
+  .an-btn.go{color:var(--accent); border-color:var(--accent-soft); border-style:solid}
+  .an-btn.go:hover{background:var(--accent-soft)}
+  /* 副驾的结果区：和简历分析一样放在卡片里，但这块讲的是「浏览器里发生了什么」，
+     所以不复用 .analysis（那个区块被「分析」按钮独占，混用会互相覆盖）。 */
+  .assist{border-top:1px dashed var(--line); margin:8px 0 0; padding-top:10px;
+          font-size:12.5px; line-height:1.85; white-space:pre-wrap}
+  .assist[hidden]{display:none}
+  .assist .a-ok{color:var(--ok)}
+  .assist .a-bad{color:var(--warn)}
+  .assist .a-wait{color:var(--muted)}
+  .assist .a-tip{color:var(--muted); margin-top:6px; white-space:normal}
+  .analysis{border-top:1px dashed var(--line); margin:8px 0 0; padding-top:10px}
+  .analysis[hidden]{display:none}
+  .an-head{display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:6px}
+  .an-score{font-size:17px; font-weight:700; font-variant-numeric:tabular-nums}
+  .an-meta{font-size:11.5px; color:var(--muted); margin-left:auto}
+  .analysis h5{margin:11px 0 5px; font-size:12.5px; color:var(--muted); font-weight:600}
+  .tags{display:flex; gap:5px; flex-wrap:wrap}
+  .tag{
+    font-size:12px; padding:2px 8px; border-radius:999px;
+    background:var(--ok-soft); color:var(--ok);
+  }
+  .gap{font-size:13px; margin:7px 0; padding-left:9px; border-left:2px solid var(--warn)}
+  .gap .sub, .qa .sub{display:block; color:var(--muted); font-size:12.5px; margin-top:2px}
+  .qa{font-size:13px; margin:7px 0}
+  .an-err{color:var(--danger); font-size:12.5px; white-space:pre-wrap; line-height:1.75}
+  .an-wait{color:var(--muted); font-size:12.5px; line-height:1.75}
+</style>
+</head>
+<body>
+<header>
+  <div class="headline">
+    <h1>岗位工作台</h1>
+    <span class="sub" id="summary">正在读取…</span>
+  </div>
+  <div class="toolbar">
+    <nav class="tabs" id="tabs"></nav>
+    <select id="src" title="只看某个招聘网站"></select>
+    <select id="score" title="只看某个分数以上">
+      <option value="0">全部分数</option>
+      <option value="60">60 分以上</option>
+      <option value="80">80 分以上</option>
+    </select>
+    <select id="sort" title="分数优先：高的在前，同分看谁更新。综合排序：把「发布多久」也算进分数，30 天前的岗位按六折计分，刚发的中高分岗位会上浮。">
+      <option value="default">分数优先</option>
+      <option value="smart">综合排序 · 新岗优先</option>
+    </select>
+    <input type="search" id="q" placeholder="搜职位或公司…">
+    <button class="tab" id="syncBtn" style="margin-left:auto"
+            title="读取 JobsDB 上的投递记录，把对应岗位自动标成已投">同步已投</button>
+    <button class="tab" id="toggleInsights">我的进度</button>
+  </div>
+</header>
+<div id="stale"></div>
+<div id="syncNote"></div>
+<section id="insights" hidden>
+  <div class="kpis" id="kpis"></div>
+  <div class="charts">
+    <div class="chart-box"><h4>投递漏斗</h4><div id="funnel"></div></div>
+    <div class="chart-box"><h4>近 30 天每日新增</h4><div id="daily"></div></div>
+  </div>
+  <div id="bySource"></div>
+  <p class="hint">「已投 / 约面」只统计你在工作台上点过按钮的岗位，以及历史里记过的状态变更；
+     抓取和日报推送不会算进去。回复率 = 约面 ÷ 已投，投得少的时候这个数没有参考价值。</p>
+  <div class="export">
+    <span class="sub">存成文件带走：</span>
+    <a id="expHtml" href="#" download>HTML 报告</a>
+    <a id="expXlsx" href="#" download>Excel 表格</a>
+    <span class="sub">PDF 用命令 <code>python run.py export -f pdf</code></span>
+  </div>
+</section>
+<main id="grid"></main>
+<div class="toast" id="toast"></div>
+
+<script>
+const TOKEN = "__BOARD_TOKEN__";
+const API = { jobs:"/api/jobs", summary:"/api/summary", status:"/api/status",
+              insights:"/api/insights", analyze:"/api/analyze",
+              sync:"/api/sync-applied", apply:"/api/apply" };
+const VIEWS = [
+  ["pending","待处理"],["applied","已投"],["interview","约面"],
+  ["closed","已结束"],["rejected","不感兴趣"],["all","全部"]
+];
+const STATUS_LABEL = {
+  new:"待处理", reported:"待处理", applied:"已投", interview:"约面",
+  closed:"已结束", rejected:"不感兴趣", stale:"已归档", expired:"已过期",
+  interested:"感兴趣", clicked:"已点击"
+};
+const state = { view:"pending", q:"", src:"", minScore:0, sort:"default" };
+// 只有这两个状态算「还没处理过」——其余状态都该给一个撤销按钮。
+const UNTOUCHED = { new:1, reported:1 };
+// 状态徽章的配色：已投蓝、约面绿，其余（含待处理）灰。
+const ST_CHIP = { applied:"st", interview:"st ok" };
+function statusChipOf(s){
+  const label = STATUS_LABEL[s] || s || "待处理";
+  return `<span class="chip ${ST_CHIP[s] || "st plain"}">${esc(label)}</span>`;
+}
+
+function headers(json){
+  const h = { "X-Board-Token": TOKEN };
+  if (json) h["Content-Type"] = "application/json";
+  return h;
+}
+function esc(s){
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => (
+    {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function toast(msg, isErr){
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.className = "toast on" + (isErr ? " err" : "");
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.className = "toast"; }, 2200);
+}
+function scoreClass(v){
+  if (v == null) return "";
+  if (v >= 80) return "high";
+  if (v >= 60) return "mid";
+  return "";
+}
+function ageText(j){
+  if (j.age_days === "" || j.age_days == null) return "";
+  // 不知道发布日时不能说「发布」。补录进来的那些只有投递日（站点列表页
+  // 不给发布时间），标成「23 天前发布」等于替它编了一个发布日期。
+  const verb = j.age_from === "posted" ? "发布" : "收录";
+  return j.age_days === 0 ? `今天${verb}` : `${j.age_days} 天前${verb}`;
+}
+function eligHtml(note){
+  if (!note) return "";
+  const hard = note.indexOf("[硬]") === 0;
+  const text = note.replace(/^\[(硬|软)\]\s*/, "");
+  return `<div class="elig ${hard ? "hard" : "soft"}">${hard ? "🚫" : "⚠️"} 门槛：${esc(text)}</div>`;
+}
+
+function cardHtml(j){
+  const badge = j.score == null
+      ? `<span class="score">未打分</span>`
+      : `<span class="score ${scoreClass(j.score)}">${j.score} 分</span>`;
+  // 综合排序下「88 分排在 82 分后面」是正常的（88 分那条挂了半个月），
+  // 但光看分数会以为排序坏了。把算出来的综合分直接印在分数旁边，
+  // 位置为什么在上面就有了答案。数值由后端算好（与 SQL 同一组常量），
+  // 前端不做第二份公式，免得以后改口径两边对不上。
+  const smart = (state.sort === "smart" && j.smart != null)
+      ? `<span class="chip smart" title="综合分 = 分数 × (1 - 0.4 × 发布天数 / 30)，挂满 30 天按六折">综合 ${j.smart}</span>`
+      : "";
+  const meta = [j.company, j.location, j.salary].filter(Boolean).map(esc).join(" · ");
+  // 状态徽章对每张卡片都显示（包括「待处理」）。以前只在非待处理时显示，
+  // 结果「待处理」列表里所有卡片都没有徽章，只剩底部四个按钮——第一个
+  // 还是蓝底高亮的「已投」，看着就像「这条已经标成已投了」。
+  const statusChip = statusChipOf(j.status);
+  // 撤销按钮只在「已经点过按钮」的卡片上出现：待处理的卡片没有可撤销的东西，
+  // 摆一个灰按钮只会让人以为点错了什么。
+  const undo = UNTOUCHED[j.status]
+      ? "" : `<button class="b-undo" data-act="undo" title="回到上一次的状态">↩︎ 撤销</button>`;
+  // 「投递」只在 JobsDB 的站内申请上出现：别的来源（跳去雇主 ATS）页面结构
+  // 完全不同，代填只会填错，不如一开始就不给这个按钮。
+  const applyBtn = j.source === "jobsdb"
+      ? `<button class="an-btn go" data-do="apply"
+                 title="弹出一个浏览器窗口，把申请里的「雇主问题」按你的口径答好——提交那一步归你">投递</button>`
+      : "";
+  return `
+  <article class="card" data-uid="${esc(j.uid)}">
+    <div class="top">
+      ${badge}
+      ${smart}
+      ${statusChip}
+      <span class="src">${esc(j.source)}</span>
+      ${j.direct ? '<span class="chip">官网直投</span>' : ""}
+      ${j.dup > 0 ? `<span class="chip dup">♻ 同岗位另有 ${j.dup} 条</span>` : ""}
+      ${applyBtn}
+      <button class="an-btn" data-act="analyze" title="拿简历逐项对照这个岗位">分析</button>
+    </div>
+    <h3>${esc(j.title)}</h3>
+    <div class="meta">${meta}</div>
+    ${j.age_days === "" ? "" : `<div class="line age">${esc(ageText(j))}</div>`}
+    ${eligHtml(j.eligibility)}
+    ${j.reason ? `<div class="reason">理由：${esc(j.reason)}</div>` : ""}
+    ${j.keyword ? `<div class="line age">关键词：${esc(j.keyword)}</div>` : ""}
+    ${j.snippet ? `<details><summary>展开岗位描述</summary><p>${esc(j.snippet)}</p></details>` : ""}
+    <div class="analysis" hidden></div>
+    <div class="assist" hidden></div>
+    <div class="actions">
+      <span class="act-lead">标记为</span>
+      <button class="b-main" data-act="applied">已投</button>
+      <button data-act="interview">约面</button>
+      <button data-act="closed">结束</button>
+      <button data-act="rejected">不感兴趣</button>
+      ${undo}
+      <a href="${esc(j.url)}" target="_blank" rel="noopener noreferrer">打开原链接 ↗</a>
+    </div>
+  </article>`;
+}
+
+function renderTabs(counts){
+  const box = document.getElementById("tabs");
+  box.innerHTML = VIEWS.map(([key, label]) => {
+    const n = key === "all"
+      ? Object.entries(counts).filter(([k]) => !k.startsWith("_")).reduce((a, [, v]) => a + v, 0)
+      : (counts[key === "pending" ? "new" : key] || 0) +
+        (key === "pending" ? (counts.reported || 0) : 0);
+    return `<button class="tab${state.view === key ? " on" : ""}" data-view="${key}">
+              ${label}<span class="n">${n}</span></button>`;
+  }).join("");
+  box.querySelectorAll(".tab").forEach(btn => {
+    btn.onclick = () => { state.view = btn.dataset.view; load(); };
+  });
+}
+
+// 来源下拉框只列库里真有的站。写死四个来源的话，没配 LinkedIn 的用户
+// 会点到一个永远空的选项，以为是坏了。
+function renderSources(sources){
+  const items = Object.entries(sources || {});
+  const box = document.getElementById("src");
+  if (state.src && !items.some(([k]) => k === state.src)) state.src = "";
+  box.innerHTML = `<option value="">全部来源</option>` + items.map(([k, n]) =>
+    `<option value="${esc(k)}">${esc(k)}（${n}）</option>`).join("");
+  box.value = state.src;
+  // 只有一个来源时这个下拉框没有任何选择余地，藏掉省地方。
+  box.style.display = items.length > 1 ? "" : "none";
+}
+
+async function load(){
+  const params = new URLSearchParams({ view: state.view, limit: "200" });
+  if (state.q) params.set("q", state.q);
+  if (state.src) params.set("source", state.src);
+  if (state.minScore > 0) params.set("min_score", String(state.minScore));
+  if (state.sort !== "default") params.set("sort", state.sort);
+  const [jobsResp, sumResp] = await Promise.all([
+    fetch(`${API.jobs}?${params}`, { headers: headers(false) }),
+    fetch(API.summary, { headers: headers(false) })
+  ]);
+  if (!jobsResp.ok) { toast("读取失败，请用控制台里的地址重新打开", true); return; }
+  const { jobs } = await jobsResp.json();
+  const sum = sumResp.ok ? await sumResp.json() : {};
+  const counts = sum.counts || {};
+  showStale(sum.stale);
+  renderTabs(counts);
+  renderSources(counts._sources);
+  const total = Object.entries(counts).filter(([k]) => !k.startsWith("_"))
+    .reduce((a, [, v]) => a + v, 0);
+  document.getElementById("summary").textContent =
+    `共 ${total} 条岗位 · 今日新增 ${counts._today || 0} 条 · 当前筛选 ${jobs.length} 条`
+    // 综合排序下分数和位置对不上，必须说清口径，否则用户会以为排序坏了
+    + (state.sort === "smart" ? " · 综合排序（发布满 30 天的按六折计分）" : "");
+  const grid = document.getElementById("grid");
+  if (!jobs.length){
+    grid.innerHTML = `<div class="empty">这个筛选下没有岗位。<br>
+      换一个标签，或者把来源/分数筛选放宽一点。</div>`;
+    return;
+  }
+  grid.innerHTML = jobs.map(cardHtml).join("");
+  grid.querySelectorAll(".card").forEach(card => {
+    // 只绑底部那四个状态按钮：分析/投递按钮也在卡片里，但它们走另一个接口
+    card.querySelectorAll(".actions button[data-act]").forEach(btn => {
+      btn.onclick = () => setStatus(card, btn.dataset.act);
+    });
+    // 用属性选择器而不是 .an-btn：投递按钮也带 an-btn 类（同一个外形），
+    // 写 .an-btn 会绑到排在前面的那个，点「分析」却跑起投递。
+    const anBtn = card.querySelector('[data-act="analyze"]');
+    if (anBtn) anBtn.onclick = () => analyze(card, anBtn);
+    const apBtn = card.querySelector('[data-do="apply"]');
+    if (apBtn) apBtn.onclick = () => assist(card, apBtn);
+  });
+}
+
+// ---------------------------------------------------------------- 简历分析
+// 一次分析要等几十秒，所以按钮立刻变成「分析中」并把结果区展开，
+// 让用户看到东西在动——不然他会以为没点上，然后连点五次。
+function analysisHtml(a, cached){
+  const score = a.match_score == null ? "—" : a.match_score;
+  const tags = (a.matched || []).map(s => `<span class="tag">${esc(s)}</span>`).join("")
+      || `<span class="sub">（没有明显对上的点，这份简历大概需要为这个岗位重写）</span>`;
+  const gaps = (a.gaps || []).map((g, i) => `
+      <div class="gap"><b>${i + 1}. ${esc(g.skill)}</b>
+        ${g.why ? `<span class="sub">为什么重要：${esc(g.why)}</span>` : ""}
+        ${g.how ? `<span class="sub">怎么补：${esc(g.how)}</span>` : ""}
+      </div>`).join("") || `<div class="sub">（没发现明显缺口）</div>`;
+  const qs = (a.interview || []).map((q, i) => `
+      <div class="qa"><b>${i + 1}. ${esc(q.q)}</b>
+        ${q.tests ? `<span class="sub">在考什么：${esc(q.tests)}</span>` : ""}
+        ${q.tip ? `<span class="sub">要点：${esc(q.tip)}</span>` : ""}
+      </div>`).join("");
+  const when = cached ? "上次结果" : "刚刚算的";
+  // 标题里的对勾/三角刻意用普通符号（✓ △）而不是 ✅ ⚠️：后两个是需要彩色
+  // emoji 字体的，某些系统/浏览器上会显示成方框（实测 headless 里就是方框）。
+  return `
+    <div class="an-head">
+      <span class="an-score">${score} 分</span><span class="sub">简历契合度</span>
+      <span class="an-meta">${when}${a._created_at ? " · " + esc(a._created_at.slice(0, 10)) : ""}</span>
+    </div>
+    ${a.summary ? `<div class="sub">${esc(a.summary)}</div>` : ""}
+    <h5>✓ 简历里已经对上的</h5>
+    <div class="tags">${tags}</div>
+    <h5>△ 缺口</h5>
+    ${gaps}
+    ${qs ? `<details><summary>面试可能会问（${(a.interview || []).length} 题）</summary>${qs}</details>` : ""}`;
+}
+
+async function analyze(card, btn){
+  const box = card.querySelector(".analysis");
+  box.hidden = false;
+  box.innerHTML = `<div class="an-wait">正在对照简历分析…通常要 20–60 秒，别关这个页面。</div>`;
+  btn.disabled = true;
+  try{
+    const resp = await fetch(API.analyze, {
+      method:"POST", headers: headers(true),
+      body: JSON.stringify({ uid: card.dataset.uid })
+    });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || "分析失败");
+    box.innerHTML = analysisHtml(data.analysis || {}, data.cached);
+  }catch(err){
+    box.innerHTML = `<div class="an-err">${esc(err.message)}</div>`;
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------- 投递副驾
+// 点「投递」会弹出一个**真实可见**的浏览器窗口，把申请里「雇主问题」那一步
+// 的选择题答好，然后停在那儿——后面两步（更新资料、复核）和最后的提交都归你。
+// 按钮在这期间显示「填表中…」，因为要等页面加载，通常 15–40 秒。
+async function assist(card, btn){
+  const box = card.querySelector(".assist");
+  box.hidden = false;
+  box.innerHTML = `<span class="a-wait">正在打开申请页并填「雇主问题」…
+    会弹出一个浏览器窗口，别关它（通常 15–40 秒）。</span>`;
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = "填表中…";
+  try{
+    const resp = await fetch(API.apply, {
+      method:"POST", headers: headers(true),
+      body: JSON.stringify({ uid: card.dataset.uid })
+    });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || "投递副驾失败");
+    const text = [data.summary, ...(data.detail || [])].join("\n");
+    box.innerHTML = `<span class="${data.onsite ? "a-ok" : "a-bad"}">${esc(text)}</span>`
+      + (data.onsite ? `<div class="a-tip">浏览器窗口还开着、内容已经填好：
+           核对一遍 → 点 Continue 走完剩下两步 → 在最后一页亲手点提交。
+           提交完回到这张卡片点「已投」记一笔。</div>` : "");
+  }catch(err){
+    box.innerHTML = `<span class="a-bad">${esc(err.message)}</span>`;
+  }finally{
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+async function setStatus(card, action){
+  const uid = card.dataset.uid;
+  const buttons = card.querySelectorAll(".actions button[data-act]");
+  buttons.forEach(b => { b.disabled = true; });
+  try{
+    const resp = await fetch(API.status, {
+      method:"POST", headers: headers(true),
+      body: JSON.stringify({ uid, action })
+    });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || "操作失败");
+    toast(action === "undo"
+      ? "已撤销（现在：" + (STATUS_LABEL[data.status] || data.status) + "）"
+      : "已标记为「" + STATUS_LABEL[data.status] + "」");
+    // 进度面板开着的时候立刻跟着变，不用关掉再打开。
+    if (insightsOn) loadInsights();
+    // 当前筛选下这条已经不该出现时，让它淡出；否则只刷新状态标签，
+    // 不打断用户继续看别的卡片。撤销则一律重载——它可能从任何视图里消失。
+    if (action !== "undo" && state.view !== "all"){
+      card.classList.add("gone");
+      setTimeout(() => { card.remove(); refreshCounts(); }, 220);
+    } else {
+      buttons.forEach(b => { b.disabled = false; });
+      load();
+    }
+  }catch(err){
+    toast(err.message, true);
+    buttons.forEach(b => { b.disabled = false; });
+  }
+}
+
+async function refreshCounts(){
+  const resp = await fetch(API.summary, { headers: headers(false) });
+  if (!resp.ok) return;
+  const data = await resp.json();
+  renderTabs(data.counts || {});
+  renderSources((data.counts || {})._sources);
+  showStale(data.stale);
+}
+
+// 页面每次刷新都从磁盘重读，所以界面永远是最新的；后台的 Python 代码却是
+// 启动那一刻装进内存的。两者对不上时，用户会看到新加的筛选没反应、新按钮
+// 点了没动静，然后以为功能坏了。这条提示专门说清楚「重启一下就好」。
+let staleShown = "";
+function showStale(file){
+  file = file || "";
+  if (file === staleShown) return;
+  staleShown = file;
+  const box = document.getElementById("stale");
+  if (!file){ box.className = ""; box.innerHTML = ""; return; }
+  box.className = "on";
+  box.innerHTML = `<b>工作台后台还是旧版程序</b>（${esc(file)} 在你打开它之后更新过），
+    所以新加的功能不会生效——比如刚选的分数筛选会被后台无视。<br>
+    关掉运行工作台的那个黑色窗口（或按 Ctrl+C），再重新双击 board.bat
+    （Mac 上是 board.command），用新打印出来的地址打开就行。`;
+}
+
+let timer = null;
+document.getElementById("q").addEventListener("input", e => {
+  clearTimeout(timer);
+  timer = setTimeout(() => { state.q = e.target.value.trim(); load(); }, 260);
+});
+document.getElementById("src").addEventListener("change", e => {
+  state.src = e.target.value; load();
+});
+document.getElementById("score").addEventListener("change", e => {
+  state.minScore = Number(e.target.value) || 0; load();
+});
+document.getElementById("sort").addEventListener("change", e => {
+  state.sort = e.target.value; load();
+});
+
+// ---------------------------------------------------------------- 进度面板
+// 图表用内联 SVG 自己画：项目要能在没网、内地打不开 CDN 的环境里正常显示，
+// 所以不引任何图表库，连字体都只用系统字体。
+function pct(a, b){
+  return b > 0 ? Math.round(a / b * 1000) / 10 + "%" : "—";
+}
+
+function svgFunnel(f){
+  const rows = [
+    ["入库岗位", f.pool || 0, "var(--muted)"],
+    ["已投", f.applied || 0, "var(--accent)"],
+    ["约面", f.interview || 0, "var(--ok)"],
+  ];
+  const barW = 452, h = 36, max = Math.max(1, f.pool || 0);
+  const H = rows.length * h + 24;
+  // 不画「进度条底槽」：0 的那一行留一条满槽，看上去像「已经走到头了」，
+  // 而它其实恰恰是「一步都还没走」。0 就只留一根 2px 的小短杠。
+  const body = rows.map(([label, n, color], i) => {
+    const w = n > 0 ? Math.max(6, barW * n / max) : 0;
+    const y = i * h;
+    const bar = w
+      ? `<rect x="76" y="8" width="${w.toFixed(1)}" height="20" rx="6"
+           fill="${color}" opacity=".8"/>`
+      : `<rect x="76" y="16" width="14" height="4" rx="2" fill="var(--line)"/>`;
+    return `<g transform="translate(0,${y})">
+      <text x="0" y="23" font-size="13" fill="var(--muted)">${label}</text>
+      ${bar}
+      <text x="${(76 + Math.max(w, 14) + 9).toFixed(0)}" y="23" font-size="13"
+        font-weight="600" fill="${n ? "var(--text)" : "var(--muted)"}">${n}</text>
+    </g>`;
+  }).join("");
+  return `<svg viewBox="0 0 640 ${H}" width="100%" height="${H}">
+    ${body}
+    <text x="0" y="${H - 2}" font-size="12" fill="var(--muted)">
+      已投率 ${pct(f.applied || 0, f.pool || 0)} · 约面率 ${pct(f.interview || 0, f.applied || 0)}
+    </text>
+  </svg>`;
+}
+
+function svgDaily(list){
+  const W = 640, H = 140, top = 22, bottom = 22, left = 6, right = 6;
+  const plotH = H - top - bottom, plotW = W - left - right;
+  const max = Math.max(1, ...list.map(d => d.new));
+  const slot = plotW / Math.max(1, list.length);
+  const bw = Math.max(1.5, slot * 0.62);
+  const bars = list.map((d, i) => {
+    if (!d.new) return "";
+    const bh = Math.max(1.5, d.new / max * plotH);
+    const x = left + i * slot + (slot - bw) / 2;
+    return `<rect x="${x.toFixed(1)}" y="${(top + plotH - bh).toFixed(1)}"
+      width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" rx="2"
+      fill="var(--accent)" opacity=".6"/>`;
+  }).join("");
+  // 有投递数据时在同一天上叠一个点，一眼看出「哪天在动手」。
+  const maxA = Math.max(0, ...list.map(d => d.applied));
+  const dots = maxA > 0 ? list.map((d, i) => {
+    if (!d.applied) return "";
+    const cx = left + i * slot + slot / 2;
+    const cy = top + plotH - (d.applied / maxA) * plotH * 0.9;
+    return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3" fill="var(--ok)"/>`;
+  }).join("") : "";
+  const first = list.length ? list[0].d.slice(5) : "";
+  const last = list.length ? list[list.length - 1].d.slice(5) : "";
+  // 图例直接画在 SVG 里：比 HTML 图例少一层布局，也不会在窄屏上挤掉
+  const legend = `<rect x="6" y="2" width="9" height="9" rx="2" fill="var(--accent)" opacity=".6"/>
+    <text x="20" y="11" font-size="11" fill="var(--muted)">入库</text>` +
+    (maxA > 0 ? `<circle cx="56" cy="7" r="3.5" fill="var(--ok)"/>
+    <text x="64" y="11" font-size="11" fill="var(--muted)">投递</text>` : "");
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}">
+    <line x1="${left}" y1="${top + plotH}" x2="${W - right}" y2="${top + plotH}" stroke="var(--line)"/>
+    <text x="${left}" y="${H - 6}" font-size="11" fill="var(--muted)">${first}</text>
+    <text x="${W - right}" y="${H - 6}" font-size="11" fill="var(--muted)" text-anchor="end">${last}</text>
+    <text x="${W - right}" y="${top - 8}" font-size="11" fill="var(--muted)" text-anchor="end">单日最多 ${max} 条</text>
+    ${legend}
+    ${bars}${dots}
+  </svg>`;
+}
+
+function sourceTable(rows){
+  if (!rows.length) return "";
+  const body = rows.map(r => `<tr>
+      <td>${esc(r.source)}</td><td>${r.pool}</td><td>${r.applied}</td>
+      <td>${r.interview}</td><td>${r.reply_rate == null ? "—" : r.reply_rate + "%"}</td>
+    </tr>`).join("");
+  return `<table class="tbl">
+    <thead><tr><th>来源</th><th>入库</th><th>已投</th><th>约面</th><th>回复率</th></tr></thead>
+    <tbody>${body}</tbody></table>`;
+}
+
+function renderInsights(data){
+  const f = data.funnel || {}, t = data.totals || {};
+  document.getElementById("kpis").innerHTML = [
+    [f.pool || 0, "入库岗位"],
+    [f.applied || 0, "已投"],
+    [f.interview || 0, "约面"],
+    [t.applied_7d || 0, "近 7 天投递"],
+  ].map(([n, label]) => `<div class="kpi"><b>${n}</b><span>${label}</span></div>`).join("");
+  document.getElementById("funnel").innerHTML = svgFunnel(f);
+  document.getElementById("daily").innerHTML = svgDaily(data.daily || []);
+  document.getElementById("bySource").innerHTML = sourceTable(data.sources || []);
+}
+
+async function loadInsights(){
+  const resp = await fetch(`${API.insights}?days=30`, { headers: headers(false) });
+  if (!resp.ok) { toast("读取进度失败", true); return; }
+  renderInsights((await resp.json()).insights || {});
+}
+
+let insightsOn = false;
+document.getElementById("toggleInsights").onclick = async () => {
+  insightsOn = !insightsOn;
+  const box = document.getElementById("insights");
+  box.hidden = !insightsOn;
+  document.getElementById("toggleInsights").classList.toggle("on", insightsOn);
+  if (insightsOn) await loadInsights();
+};
+
+// ---------------------------------------------------------------- 同步已投
+// 一次同步要几十秒（起浏览器 + 翻五页）。按钮必须立刻变成「同步中…」，
+// 否则用户会以为没点上，然后连点五次——每点一次都会再起一个浏览器。
+const syncBtn = document.getElementById("syncBtn");
+const syncBox = document.getElementById("syncNote");
+syncBox.title = "点击收起";
+syncBox.onclick = () => { syncBox.className = ""; };
+syncBtn.onclick = async () => {
+  const label = syncBtn.textContent;
+  syncBtn.disabled = true;
+  syncBtn.textContent = "同步中…";
+  syncBox.className = "on";
+  syncBox.textContent =
+    "正在读取 JobsDB 的投递记录（Activity → Applied），通常 30–60 秒…";
+  try{
+    const resp = await fetch(API.sync, {
+      method: "POST", headers: headers(true), body: "{}"
+    });
+    const data = await resp.json();
+    if (!data.ok) throw new Error(data.error || "同步失败");
+    // 一条都没标上（比如站点确实没记录、或者档案没登录）用黄色，
+    // 免得用户以为「同步成功」而其实什么都没发生。
+    syncBox.className = data.marked ? "on" : "on bad";
+    syncBox.textContent = [data.summary, ...(data.detail || [])].join("\n");
+    await load();
+  }catch(err){
+    syncBox.className = "on bad";
+    syncBox.textContent = "同步失败：" + err.message;
+  }finally{
+    syncBtn.disabled = false;
+    syncBtn.textContent = label;
+  }
+};
+
+// 导出链接把令牌放在查询串里：浏览器下载是普通导航，带不了自定义请求头，
+// 而 `/api/export` 与页面同样要求令牌——用 ?t= 正好复用既有校验。
+(function wireExports(){
+  const q = "t=" + encodeURIComponent(TOKEN);
+  document.getElementById("expHtml").href = `/api/export?fmt=html&${q}`;
+  document.getElementById("expXlsx").href = `/api/export?fmt=xlsx&${q}`;
+})();
+
+load();
+</script>
+</body>
+</html>

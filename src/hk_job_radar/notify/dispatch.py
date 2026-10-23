@@ -2,13 +2,12 @@
 
 它做三件事：
 1. **按配置装配通道**：config.yaml 的 notify.channels 写了哪几个，就造哪几个对象；
-2. **一次推送、多通道并发发**：日报/实时卡片只生成一次，广播给所有启用通道
-   （免费版经 tier 裁剪后只剩 1 个，高级版可以全部打开）；
+2. **一次推送、多通道并发发**：日报/实时卡片只生成一次，广播给所有启用通道；
 3. **失败隔离**：任何一路发送失败都只记日志，绝不影响其它通道、也绝不让
    主流程崩掉——"企业微信挂了但我还收到了邮件"正是这个设计要保住的体验。
 
-四个通道完全平等：谁被启用，取决于用户把谁写在 notify.channels 的第一位
-（免费版只能留一个），系统不预设任何优先级。
+四个通道完全平等：启用哪几个，取决于 config.yaml 的 notify.channels 写了什么，
+系统不预设任何优先级。
 """
 from __future__ import annotations
 
@@ -123,7 +122,7 @@ class Notifier:
         return results
 
     def send_realtime(self, job: "JobPosting") -> dict[str, bool]:
-        """推送单个高分岗位（免费版不会走到这里，见 tier.realtime_push_enabled）。"""
+        """推送单个高分岗位。"""
         results: dict[str, bool] = {}
         for c in self.channels:
             if c.render_mode == "html":

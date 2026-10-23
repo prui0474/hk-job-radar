@@ -9,8 +9,7 @@
     email_client.py      邮件 SMTP（零新增依赖、可发 HTML 岗位卡片）
     report.py            排版（文本分页 + HTML 卡片，与通道解耦）
 
-四个通道完全平等，用哪个由 config.yaml 的 notify.channels 决定；
-免费版经 tier 裁剪后只保留其中一个（详见 hk_job_radar/tier.py）。
+四个通道完全平等，用哪几个由 config.yaml 的 notify.channels 决定，写几个就发几个。
 """
 from hk_job_radar.notify.base import NotifyChannel
 from hk_job_radar.notify.dispatch import Notifier, build_channel

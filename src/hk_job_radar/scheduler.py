@@ -13,7 +13,6 @@ from datetime import datetime
 from apscheduler.schedulers.blocking import BlockingScheduler
 from loguru import logger
 
-from hk_job_radar import tier
 from hk_job_radar.config import AppConfig
 from hk_job_radar.models import HK_TZ
 from hk_job_radar.pipeline import Pipeline
@@ -24,6 +23,17 @@ _JOB_DEFAULTS = {
     "max_instances": 1,
     "coalesce": True,
 }
+
+
+def report_times_of(config: AppConfig) -> list[str]:
+    """实际生效的每日日报时间点。
+
+    配了 `report_times`（可以写好几个，如 09:00 和 18:30）就按它来；
+    没配就退回单个 `report_time`。手动 `report now` 不受这里影响。
+    """
+    times = [str(t).strip() for t in (getattr(config, "report_times", []) or [])
+             if str(t).strip()]
+    return times or [config.report_time]
 
 
 def _safe(fn, name: str):
@@ -52,7 +62,7 @@ class Scheduler:
         self.setup_report_job(sched)
         self.setup_feedback_job(sched)
 
-        times = "、".join(tier.effective_report_times(self.config))
+        times = "、".join(report_times_of(self.config))
         channels = "、".join(self.pipeline.notifier.labels) or "（未配置）"
         logger.info(
             f"调度器启动：监控每 {self.config.poll_interval_minutes} 分钟 · "
@@ -78,11 +88,9 @@ class Scheduler:
     def setup_report_job(self, sched: BlockingScheduler) -> None:
         """每日日报任务（香港时间 cron）。
 
-        免费版只有 report_time 一个时间点（天然就是「每天 1 次」）；高级版可以
-        配 report_times 挂多个时间点。具体取几个由 tier.effective_report_times 决定，
-        这里不写死数字——分层规则只在一个地方定义。
+        时间点来自 report_times（可多个）；没配就用 report_time 那一个。
         """
-        for idx, time_str in enumerate(tier.effective_report_times(self.config)):
+        for idx, time_str in enumerate(report_times_of(self.config)):
             hour, minute = (int(x) for x in time_str.split(":"))
             sched.add_job(
                 _safe(self.pipeline.run_daily_report, f"daily_report_{time_str}"),

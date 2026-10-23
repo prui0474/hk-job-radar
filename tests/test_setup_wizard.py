@@ -153,12 +153,12 @@ def test_validate_blocks_no_source_enabled():
     assert any(e["field"] == "sources" for e in errors)
 
 
-def test_validate_over_quota_is_note_not_error():
-    """超过免费版关键词额度只提示、不拦 —— 程序运行时会自动取前几个。"""
+def test_validate_many_keywords_is_not_flagged():
+    """关键词没有额度上限：填 11 个既不拦、也不提示。"""
     many = "\n".join(f"job title {i}" for i in range(11))
     errors, notes = w.validate_form(w.form_from_payload(_payload(keywords=many)))
     assert not errors
-    assert any(n["field"] == "keywords" for n in notes)
+    assert not any(n["field"] == "keywords" for n in notes)
 
 
 def test_validate_short_profile_is_note_not_error():
@@ -402,12 +402,12 @@ def test_apply_form_merges_blank_secret_with_existing():
 
 
 # ---------------------------------------------------------------------------
-# 五、页面预填：不能因为免费版额度就把用户的关键词"看少"
+# 五、页面预填：不能把用户的关键词"看少"
 # ---------------------------------------------------------------------------
 def test_current_state_prefills_all_keywords_beyond_quota():
     """19 个关键词的旧配置，页面要显示 19 个。
 
-    如果按 load_config 的结果预填（免费版只留 7 个），用户改个日报时间一保存，
+    如果按 load_config 规范化后的结果预填，用户改个日报时间一保存，
     另外 12 个词就被永久删掉了 —— 这是真实的数据丢失。
     """
     with Sandbox() as box:
@@ -470,6 +470,69 @@ def test_cli_registers_setup_command():
     args = parser.parse_args(["setup", "--no-browser"])
     assert args.func.__name__ == "cmd_setup"
     assert args.no_browser is True
+
+
+# ---------------------------------------------------------------------------
+# 十、简历路径（P5 之前补进向导的那一项）
+# ---------------------------------------------------------------------------
+def test_resume_path_backslashes_become_slashes():
+    """Windows 路径里的 `\\t` 会被 YAML 双引号标量当制表符，必须换成斜杠。"""
+    form = w.form_from_payload(_payload(resume_path=r"C:\temp\cv.docx"))
+    assert form.resume_path == "C:/temp/cv.docx"
+
+
+def test_resume_path_strips_copied_quotes():
+    form = w.form_from_payload(_payload(resume_path='  "C:/a/cv.docx"  '))
+    assert form.resume_path == "C:/a/cv.docx"
+
+
+def test_resume_path_empty_is_allowed():
+    """留空＝不用这个功能，不能拦。"""
+    errors, notes = w.validate_form(w.form_from_payload(_payload(resume_path="")))
+    assert not any(e["field"] == "resume_path" for e in errors)
+
+
+def test_validate_blocks_resume_path_that_does_not_exist():
+    errors, _ = w.validate_form(
+        w.form_from_payload(_payload(resume_path="C:/definitely/not/here/cv.docx")))
+    hit = [e for e in errors if e["field"] == "resume_path"]
+    assert hit, "文件不存在时应当拦住保存"
+    assert "没找到" in hit[0]["message"]
+
+
+def test_validate_blocks_pdf_resume():
+    """PDF 读不出文字，与其保存后在分析时报错，不如当场说清怎么转。"""
+    with tempfile.TemporaryDirectory() as d:
+        pdf = Path(d) / "cv.pdf"
+        pdf.write_bytes(b"%PDF-1.4 fake")
+        errors, _ = w.validate_form(w.form_from_payload(_payload(resume_path=str(pdf))))
+    hit = [e for e in errors if e["field"] == "resume_path"]
+    assert hit and "另存为 .docx" in hit[0]["message"]
+
+
+def test_validate_accepts_existing_docx():
+    with tempfile.TemporaryDirectory() as d:
+        docx = Path(d) / "cv.docx"
+        docx.write_bytes(b"PK\x03\x04 fake")
+        errors, _ = w.validate_form(w.form_from_payload(_payload(resume_path=str(docx))))
+    assert not any(e["field"] == "resume_path" for e in errors)
+
+
+def test_render_and_verify_roundtrip_resume_path():
+    """写回 config.yaml 后再解析回来，路径必须一模一样（含中文目录）。"""
+    with Sandbox() as box:
+        raw = box.template.read_text(encoding="utf-8")
+        form = w.form_from_payload(_payload(resume_path="C:/Users/某某/简历/CV.docx"))
+        text = w._apply_form_to_text(raw, form)
+        assert not w.verify_config_text(text, form)
+        parsed = yaml.safe_load(text)
+        assert parsed["resume_path"] == "C:/Users/某某/简历/CV.docx"
+
+
+def test_ui_has_resume_field():
+    html = w.UI_PATH.read_text(encoding="utf-8")
+    assert 'id="resume_path"' in html
+    assert "简历文件（可选）" in html
 
 
 if __name__ == "__main__":

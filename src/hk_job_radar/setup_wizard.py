@@ -52,7 +52,7 @@ from urllib.parse import parse_qs, urlparse
 import yaml
 from loguru import logger
 
-from hk_job_radar import tier
+from hk_job_radar import channels
 from hk_job_radar.config import (
     CONFIG_PATH,
     PROJECT_ROOT,
@@ -185,6 +185,9 @@ class WizardForm:
     #: 浏览器代理："" 直连（默认）/"system" 跟随系统/具体地址
     browser_proxy: str = ""
 
+    #: 简历文件路径（「简历-JD 差距分析」用；留空＝不用该功能）
+    resume_path: str = ""
+
     profile_background: str = ""
     api_key: str = ""
 
@@ -242,6 +245,20 @@ def _clean_proxy(value: Any) -> str:
     return text
 
 
+def _clean_path(value: Any) -> str:
+    """规范化用户填的文件路径（简历路径这类）。
+
+    只做三件事：去首尾空格、剥掉误加的成对引号、把反斜杠换成斜杠。
+
+    反斜杠换斜杠不是洁癖：有人会写 `C:\\temp\\cv.docx`，`\\t` 在 YAML 双引号
+    标量里会被解释成制表符，路径就崩了；换成正斜杠后 Windows 一样能打开。
+    """
+    text = str(value or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+        text = text[1:-1].strip()
+    return text.replace("\\", "/")
+
+
 def form_from_payload(payload: dict[str, Any]) -> WizardForm:
     """前端 JSON → WizardForm（做过类型收敛，脏数据不会带进下一步）。"""
     sources_raw = payload.get("sources") or {}
@@ -276,6 +293,7 @@ def form_from_payload(payload: dict[str, Any]) -> WizardForm:
         score_threshold=_as_int(payload.get("score_threshold"), 60),
         realtime_threshold=_as_int(payload.get("realtime_threshold"), 80),
         browser_proxy=_clean_proxy(payload.get("browser_proxy")),
+        resume_path=_clean_path(payload.get("resume_path")),
         profile_background=str(payload.get("profile_background") or "").strip(),
         api_key=str(payload.get("api_key") or "").strip(),
     )
@@ -332,25 +350,17 @@ def validate_form(form: WizardForm) -> tuple[list[dict[str, str]], list[dict[str
     """返回 (错误列表, 提示列表)。
 
     错误 = 保存会被拒绝（配置根本跑不起来）；
-    提示 = 可以保存，但结果会不如预期（例如关键词超过免费版额度）。
+    提示 = 可以保存，但结果会不如预期（例如填了简历路径但文件不存在）。
     这个区分很重要：把「建议」也做成硬拦截，会让用户觉得程序在跟他作对。
     """
     errors: list[dict[str, str]] = []
     notes: list[dict[str, str]] = []
 
-    total_kw = len(form.keywords) + len(form.graduate_keywords)
     if not form.keywords and not form.graduate_keywords:
         errors.append({
             "field": "keywords",
             "message": "关键词还是空的。至少填 1 个你想找的岗位名称，"
                        "比如 data analyst、business analyst。",
-        })
-    if total_kw > tier.FREE_MAX_KEYWORDS:
-        notes.append({
-            "field": "keywords",
-            "message": f"关键词一共 {total_kw} 个，免费版最多用前 {tier.FREE_MAX_KEYWORDS} 个"
-                       f"（程序会按顺序取前 {tier.FREE_MAX_KEYWORDS} 个，其余忽略）。"
-                       f"想全部生效需要高级版，或者删掉几个不重要的。",
         })
 
     if not any(form.sources.values()):
@@ -367,10 +377,12 @@ def validate_form(form: WizardForm) -> tuple[list[dict[str, str]], list[dict[str
                        "（端口号在你代理软件的主界面上能看到）。",
         })
 
+    errors.extend(_resume_path_errors(form.resume_path))
+
     if not form.channel:
         errors.append({"field": "channel", "message": "还没有选择推送通道。"
                                                        "消息要走哪个渠道发到手机上，必须选一个。"})
-    elif form.channel not in tier.VALID_CHANNELS:
+    elif form.channel not in channels.VALID_CHANNELS:
         errors.append({"field": "channel", "message": f"未知的通道「{form.channel}」。"})
     else:
         for field_name, label in _CHANNEL_REQUIRED[form.channel]:
@@ -423,6 +435,42 @@ def validate_form(form: WizardForm) -> tuple[list[dict[str, str]], list[dict[str
         })
 
     return errors, notes
+
+
+def _resume_path_errors(raw: str) -> list[dict[str, str]]:
+    """简历路径的检查。留空＝不用这个功能，不算错。
+
+    为什么这里要**硬拦**（而不是像关键词超限那样只提示）：路径写错以后，
+    「分析」按钮点下去会在几秒后才报错，而用户很难把那个错误和自己的
+    typo 联系起来。在保存这一刻指出「这个文件不存在」，成本最低。
+    """
+    text = (raw or "").strip()
+    if not text:
+        return []
+    path = Path(text).expanduser()
+    if not path.is_absolute():
+        path = CONFIG_PATH.parent / path
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        return [{
+            "field": "resume_path",
+            "message": "PDF 读不出文字（里面的字是按坐标画的，不是可读文本）。"
+                       "请用 Word 打开它，另存为 .docx，再把这里指向那个 .docx。",
+        }]
+    if suffix not in (".docx", ".txt", ".md"):
+        return [{
+            "field": "resume_path",
+            "message": f"不支持 {suffix or '这种'} 格式。简历请用 .docx（推荐）"
+                       "或 .txt / .md；.doc、.pages 请先另存一份。",
+        }]
+    if not path.is_file():
+        return [{
+            "field": "resume_path",
+            "message": f"这个路径下没找到文件：{path}\n"
+                       "检查一下有没有打错；Windows 路径建议直接从资源管理器"
+                       "地址栏复制，并把反斜杠换成 /。",
+        }]
+    return []
 
 
 def _channel_format_errors(form: WizardForm) -> list[dict[str, str]]:
@@ -781,6 +829,8 @@ def _apply_form_to_text(text: str, form: WizardForm) -> str:
                       append_if_missing=True)
     # 缩进字段，必须长在 browser: 段里，不能补到文件末尾
     text = _set_section_value(text, "browser", "  proxy", form.browser_proxy)
+    text = _set_value(text, "resume_path", form.resume_path, label="简历路径",
+                      append_if_missing=True)
     return text
 
 
@@ -831,6 +881,7 @@ def _minimal_yaml() -> str:
         "  wxpusher:\n    app_token: \"\"\n    uids: []\n"
         "feedback_poll_seconds: 60\n"
         'report_time: "09:00"\n'
+        'resume_path: ""\n'
     )
 
 
@@ -878,6 +929,7 @@ def verify_config_text(text: str, form: WizardForm) -> list[str]:
     _check("实时推送线", raw.get("realtime_threshold"), form.realtime_threshold)
     _check("浏览器代理", str((raw.get("browser") or {}).get("proxy") or ""),
            form.browser_proxy)
+    _check("简历路径", str(raw.get("resume_path") or ""), form.resume_path)
     return problems
 
 
@@ -1021,8 +1073,8 @@ def _build_diff(form: WizardForm) -> list[dict[str, str]]:
         "、".join(old.enabled_sources()) if old else "（无旧配置）",
         "、".join(n for n, v in form.sources.items() if v) or "（无）")
     add("推送通道",
-        "、".join(tier.channel_label(c) for c in (old.notify.channels if old else [])) or "（无）",
-        tier.channel_label(form.channel))
+        "、".join(channels.channel_label(c) for c in (old.notify.channels if old else [])) or "（无）",
+        channels.channel_label(form.channel))
 
     old_tg = old.notify.telegram.bot_token if old else ""
     add("Telegram token", _mask(old_tg), _mask(form.telegram_bot_token))
@@ -1035,6 +1087,9 @@ def _build_diff(form: WizardForm) -> list[dict[str, str]]:
         str(form.score_threshold))
     add("实时推送线", str(old.realtime_threshold) if old else "（无旧配置）",
         str(form.realtime_threshold))
+    # 简历路径是本地文件位置，不算凭据，可以照原样显示
+    add("简历路径", (old.resume_path if old else "（无旧配置）") or "（未设置）",
+        form.resume_path or "（未设置）")
     return rows
 
 
@@ -1123,11 +1178,8 @@ def current_state() -> dict[str, Any]:
         "profile_background": "",
         "has_api_key": False,
         "api_key_hint": "",
-        "free_max_keywords": tier.FREE_MAX_KEYWORDS,
-        "free_max_channels": tier.FREE_MAX_CHANNELS,
-        "is_premium": tier.is_premium(),
         "has_config": CONFIG_PATH.exists(),
-        "channels": [{"name": n, "label": tier.channel_label(n)} for n in tier.VALID_CHANNELS],
+        "channels": [{"name": n, "label": channels.channel_label(n)} for n in channels.VALID_CHANNELS],
     }
     try:
         cfg = load_config(CONFIG_PATH, require_runnable=False)
@@ -1141,6 +1193,7 @@ def current_state() -> dict[str, Any]:
             "score_threshold": cfg.score_threshold,
             "realtime_threshold": cfg.realtime_threshold,
             "browser_proxy": cfg.browser_proxy,
+            "resume_path": cfg.resume_path,
             "email_smtp_host": cfg.notify.email.smtp_host,
             "email_smtp_port": cfg.notify.email.smtp_port,
             "email_user": cfg.notify.email.user,
@@ -1158,10 +1211,10 @@ def current_state() -> dict[str, Any]:
         # 配置坏了也要能打开页面 —— 否则用户就失去了唯一的自助修复入口
         state["load_error"] = str(exc)
 
-    # 关键词改用「文件里的原文」，不用 load_config 的结果。
-    # 原因很重要：load_config 会按免费版额度裁到前 7 个。如果页面拿裁剪后的
-    # 值做预填，用户只是改了个日报时间、一保存，剩下的关键词就被永久删掉了。
-    # 页面显示全部、按原样回写，程序运行时该裁还是会裁 —— 但文件不丢东西。
+    # 关键词改用「文件里的原文」，不用 load_config 解析后的结果。
+    # 为什么：页面要显示、要回写的是用户自己写的那份清单。走 load_config 会
+    # 经过一轮规范化，用户只是改了个日报时间、一保存，清单就可能被悄悄改写。
+    # 读原文、按原文回写，开关一次向导不会让文件里的东西变样。
     try:
         raw_cfg = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
         for key in ("keywords", "graduate_keywords"):

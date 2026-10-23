@@ -68,6 +68,12 @@ class JobPosting:
     # 有些门槛是硬的（永久居民身份），有些是软的（粤语可以边学边投），
     # 能不能投只有本人判断得了，程序不替他做这个决定。
     eligibility_note: str = ""
+    # 跨站重复指纹 = 归一化后的「公司名|职位名」。
+    # 入库时算好存起来，日报与实时推送都靠它认出「这其实是同一个岗位」。
+    # NO_KEY（"-"）= 信息不全，无法判断（见 dedup.py）。
+    dedupe_key: str = ""
+    # 显示用：本条与日报里第几号是同一岗位。不入库——序号每次日报都变。
+    duplicate_note: str = ""
 
     @property
     def job_uid(self) -> str:

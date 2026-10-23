@@ -7,14 +7,17 @@ run.py 只负责把 src/ 加入 sys.path 并调用这里的 main()——所有�
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 from loguru import logger
 
-from hk_job_radar import tier
+from hk_job_radar import channels
 from hk_job_radar.config import (
+    PROJECT_ROOT,
     ConfigError,
     load_config,
     require_llm_key,
@@ -69,8 +72,7 @@ def cmd_once(args: argparse.Namespace) -> int:
         print(f"  {source:<9} 抓到 {stat.get('fetched', 0):>3} → 初筛留 {stat.get('kept', 0):>3}"
               f" → 新入库 {stat.get('new', 0):>3} → 已打分 {stat.get('scored', 0):>3}"
               f"（打分失败 {stat.get('degraded', 0)}）")
-    print(f"  实时推送（≥{config.realtime_threshold} 分）   {summary.get('pushed_realtime', 0)} 个"
-          f"{'' if tier.realtime_push_enabled() else '（免费版不含秒推，已并入日报）'}")
+    print(f"  实时推送（≥{config.realtime_threshold} 分）   {summary.get('pushed_realtime', 0)} 个")
     print(f"  推送通道：{'、'.join(pipeline.notifier.labels) or '（未配置）'}")
     print(f"  日报：{'已推送 ✅' if sent else '本次无需推送（今日已推过 / 暂无新岗位）'}")
     print("─" * 52)
@@ -108,9 +110,9 @@ def cmd_notify_test(args: argparse.Namespace) -> int:
     ok = [name for name, good in results.items() if good]
     bad = [name for name, good in results.items() if not good]
     for name in ok:
-        print(f"  ✅ {tier.channel_label(name)}：发送成功，去你的收件端看一眼")
+        print(f"  ✅ {channels.channel_label(name)}：发送成功，去你的收件端看一眼")
     for name in bad:
-        print(f"  ❌ {tier.channel_label(name)}：发送失败（原因见 data/logs/ 下的日志）")
+        print(f"  ❌ {channels.channel_label(name)}：发送失败（原因见 data/logs/ 下的日志）")
 
     print("─" * 52)
     if not ok:
@@ -198,42 +200,167 @@ def cmd_guide(args: argparse.Namespace) -> int:
 
 
 def cmd_apply(args: argparse.Namespace) -> int:
-    """`hk_radar apply <job_id>`：投递副驾（T05）。
+    """`hk_radar apply <job_id> [--probe]`：投递副驾（T05）。
 
-    完整流程：
-      取岗位 → 选简历 → 打开申请页 → 填充字段/上传简历/生成筛选问题答案
-      → 【逐字段人工确认】→ 提示用户在浏览器中亲手提交 → 投递留档
+    两条路，按岗位来源分派：
+      - JobsDB → `copilot/jobsdb_apply.py`：站内四步申请，只答「雇主问题」那一步；
+      - 其它站点 → 旧的通用填表器（`copilot/form_filler.py`），尚未在真实页面验证。
 
-    合规红线：本函数不点击任何提交按钮，提交动作完全由用户完成。
+    合规红线：本函数不点任何提交按钮。JobsDB 那条路只点一次 `Continue`
+    （把「选择文件」翻到「雇主问题」），剩下的点击全归用户。
     """
     config = load_config()
     db = Database(str(_db_path()))
+    try:
+        job = db.get_job(args.job_id)
+        if job is None:
+            print(f"❌ 找不到岗位：{args.job_id}")
+            print("   提示：job_uid 形如 jobsdb:12345678；可以在工作台卡片上复制，"
+                  "或用 `run.py stats` 看看库里有哪几条。")
+            return 1
 
-    job = db.get_job(args.job_id)
-    if job is None:
-        print(f"❌ 找不到岗位：{args.job_id}")
-        print("   提示：job_uid 形如 jobsdb:12345678；可以到日报卡片里复制岗位 ID，"
-              "或双击 report_now.bat 重新发一份日报。")
+        # 延迟导入：copilot 依赖 playwright，stats/login 等命令不该被它拖累
+        from hk_job_radar.copilot.profile import ProfileStore
+        from hk_job_radar.scrapers.browser import BrowserManager
+
+        profile = ProfileStore().load()
+        # form_answers 是【选择题】的结构化答案（薪资档位、经验年限、学历）。
+        # 它和 screening_rules 里那些「话术」刻意分开：一段话塞不进下拉框，
+        # 硬塞只能靠猜关键词，猜错就答到别的选项上去了。
+        rules = profile.raw.get("screening_rules") or {}
+        form_answers = dict(rules.get("form_answers") or {})
+
+        browser = BrowserManager(config)
+        if job.source == "jobsdb":
+            return _apply_jobsdb(db, browser, job, form_answers,
+                                 dry_run=bool(getattr(args, "probe", False)))
+        return _apply_generic(db, browser, job, config, profile)
+    finally:
+        db.close()
+
+
+def _shot(page, name: str = "apply_latest.png") -> str:
+    """存一张截图给用户核对用。失败不阻断流程。"""
+    try:
+        from hk_job_radar.config import DATA_DIR
+
+        out = DATA_DIR / "screenshots"
+        out.mkdir(parents=True, exist_ok=True)
+        path = out / name
+        page.screenshot(path=str(path), full_page=True)
+        return str(path)
+    except Exception as exc:          # noqa: BLE001
+        logger.debug(f"截图失败（忽略）：{exc}")
+        return ""
+
+
+def _apply_jobsdb(db, browser, job, form_answers: dict, *, dry_run: bool = False) -> int:
+    """JobsDB 站内申请的副驾流程。**永不提交**。"""
+    from hk_job_radar.copilot import jobsdb_apply
+    from hk_job_radar.models import ApplicationRecord, now_hk
+
+    url = jobsdb_apply.apply_url(job)
+    print(f"\n🚗 投递副驾：{job.title} @ {job.company}")
+    print(f"   申请页：{url}")
+    if dry_run:
+        print("   （试跑：只告诉你我会选什么，不往页面里写任何值）")
+
+    page = browser.launch(job.source, force_headless=False)   # 必须看得见
+    print("   正在打开申请页（浏览器窗口会弹出来，不用管它）…", flush=True)
+    try:
+        # ★ 等 domcontentloaded 而不是 networkidle：JobsDB 页面永远有后台请求，
+        #   networkidle 在真实页面上从来不会就绪（实测每次都超时）。
+        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+        browser.wait_cloudflare(page)
+        page.wait_for_timeout(3000)
+        report = jobsdb_apply.assist(page, job, form_answers, dry_run=dry_run)
+        report.screenshot = _shot(page)
+    except Exception as exc:          # noqa: BLE001
+        logger.exception(f"投递副驾执行失败：{exc}")
+        browser.close()
+        print(f"❌ 副驾执行失败：{exc}（详见 data/logs/ 日志）")
         return 1
 
-    # 延迟导入：copilot 依赖 playwright，stats/login 等命令不应被它拖累
+    print()
+    print(report.summary())
+    for line in report.detail_lines():
+        print(line)
+    if report.screenshot:
+        print(f"\n页面截图：{report.screenshot}")
+
+    if not report.onsite or report.note:
+        browser.close()
+        if not report.onsite:
+            print("\n（已经打开那个页面了，就在浏览器里——直接在那儿填吧。）")
+            try:
+                input("看完按回车关闭浏览器 > ")
+            except (EOFError, KeyboardInterrupt):
+                pass
+            browser.close()
+        return 0
+
+    if dry_run:
+        browser.close()
+        print("\n（试跑结束：页面一个字都没改。去掉 --probe 才会真的填。）")
+        return 0
+
+    print("\n" + "=" * 62)
+    print("接下来的每一步都由你操作：")
+    print("  1) 在浏览器里核对每个答案——尤其「期望薪资」和「经验年限」这两项；")
+    print("  2) 点 Continue 依次经过「更新资料」和「复核」两步；")
+    print("  3) 在最后一页亲手点 Submit。")
+    print("本系统不会替你提交——这是合规红线。")
+    print("=" * 62)
+    try:
+        submitted = input("提交完成后输入 y 留档，直接回车表示先不记 > ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        submitted = ""
+    browser.close()
+
+    if submitted in ("y", "yes"):
+        record = ApplicationRecord(
+            job_uid=job.job_uid,
+            company=job.company,
+            title=job.title,
+            applied_date=now_hk().date().isoformat(),
+            channel="jobsdb",
+            resume_version="",
+        )
+        db.save_application(record)
+        # 走 set_board_status 而不是 update_status：要把这次投递记进
+        # status_history，工作台「近 7 天投递」和漏斗才看得见。
+        db.set_board_status(job.job_uid, "applied", note="投递副驾")
+        print(f"✅ 已留档并标成已投：{record.title} @ {record.company}"
+              f"（{record.applied_date}）")
+    else:
+        print("未留档（本次不计入投递记录）。")
+    return 0
+
+
+def _apply_generic(db, browser, job, config, profile) -> int:
+    """非 JobsDB 岗位的旧路径（通用填表器 + 终端逐字段确认）。
+
+    保留它是因为 LinkedIn / 猎头直投的页面结构完全不同，而新写的
+    JobsDB 专用逻辑套不过去。这条路**没有在真实页面上验证过**，
+    所以先照实说一句。
+    """
     from hk_job_radar.copilot.confirm import ConfirmGate
     from hk_job_radar.copilot.form_filler import FormFiller
     from hk_job_radar.copilot.profile import ProfileStore
     from hk_job_radar.copilot.qa_engine import QAEngine
     from hk_job_radar.config import DATA_DIR
     from hk_job_radar.models import ApplicationRecord, now_hk
-    from hk_job_radar.scrapers.browser import BrowserManager
 
     resumes_dir = DATA_DIR / "resumes"
     resumes_dir.mkdir(parents=True, exist_ok=True)
     if not any(resumes_dir.iterdir()):
-        print(f"⚠️  {resumes_dir} 目录下没有简历文件。")
-        print("   请把英文简历（PDF，如 resume_DS_en_v2.pdf）放进去，副驾才能自动上传。")
+        print(f"⚠️  {resumes_dir} 目录下没有简历文件，副驾没法自动上传。")
+
+    print(f"\n⚠️  {job.source} 的申请页结构和 JobsDB 不一样，这条路还没在真实"
+          f"页面上验证过，字段识别可能不准。")
+    print("   遇到不对的字段，请在浏览器里直接改，别指望它填对。")
 
     store = ProfileStore()
-    profile = store.load()
-    browser = BrowserManager(config)
     filler = FormFiller(config, browser, store, QAEngine(config.llm, profile))
 
     print(f"\n🚗 投递副驾启动：{job.title} @ {job.company}")
@@ -241,14 +368,14 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
     try:
         result = filler.fill(job)
-        page = browser.launch("apply", force_headless=False)   # 复用同一页面供编辑
+        # 复用同一个 page（BrowserManager 按 source_key 缓存，不会重开）
+        page = browser.launch("apply", force_headless=False)
         decision = ConfirmGate().review(result, page)
-    except Exception as exc:
+    except Exception as exc:          # noqa: BLE001
         logger.exception(f"投递副驾执行失败：{exc}")
+        browser.close()
         print(f"❌ 副驾执行失败：{exc}（详见 data/logs/ 日志）")
         return 1
-    finally:
-        pass   # 浏览器在用户完成提交后再关（close 在下方分支里调用）
 
     if decision != "confirmed":
         browser.close()
@@ -256,10 +383,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
         return 0
 
     print("\n" + "=" * 62)
-    print("请在弹出的浏览器窗口中：")
-    print("  1) 逐项核对上面的字段（尤其是 🔶 AI 生成的答案）；")
-    print("  2) 补齐【需你手动处理】的项目；")
-    print("  3) 亲手点击 Submit / 提交按钮。")
+    print("请在弹出的浏览器窗口中补齐缺项，并亲手点击 Submit / 提交按钮。")
     print("本系统不会替你提交——这是产品的合规红线。")
     print("=" * 62)
     try:
@@ -278,7 +402,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
             resume_version=Path(result.resume_path).name if result.resume_path else "",
         )
         db.save_application(record)
-        db.update_status(job.job_uid, "applied")
+        db.set_board_status(job.job_uid, "applied", note="投递副驾")
         print(f"✅ 已留档：{record.title} @ {record.company}（{record.applied_date}）")
     else:
         print("未留档（本次不计入投递记录）。")
@@ -487,6 +611,254 @@ def _db_path():
     return DB_PATH
 
 
+def cmd_board(args: argparse.Namespace) -> int:
+    """`hk_radar board`：打开岗位工作台（P2 本地网页看板）。
+
+    只读命令的兄弟——它要写 `jobs.status`，所以先跑一次配置校验：
+    配置有毛病时在这里给中文提示，比开了网页再一堆 500 好。
+    不加载 LLM key、不启动浏览器、不抓取，纯本地服务。
+    """
+    from hk_job_radar.workbench import serve
+
+    cfg = load_config(require_runnable=False)
+    db = Database(str(_db_path()))
+    db.init_schema()
+    try:
+        return serve(db, port=args.port, open_browser=not args.no_browser, cfg=cfg)
+    finally:
+        db.close()
+
+
+def cmd_match(args: argparse.Namespace) -> int:
+    """`hk_radar match <job_uid>`：简历与岗位逐项对照。
+
+    与 `board` 的分工：board 是日常点按钮的地方，分析属于「要投之前认真看
+    一遍」，一次几十秒、要花 token，所以做成显式命令而不是打开就看。
+    """
+    from hk_job_radar import resume as resume_mod
+    from hk_job_radar.matcher import MatchError, ResumeMatcher
+
+    cfg = load_config(require_runnable=False)
+    db = Database(str(_db_path()))
+    db.init_schema()
+    try:
+        if not args.job_uid:
+            return _list_match_candidates(db)
+
+        job = db.get_job(args.job_uid)
+        if job is None:
+            print(f"库里没有这个岗位：{args.job_uid}")
+            print("去掉参数直接运行 `python run.py match`，会列出可以分析的岗位编号。")
+            return 1
+
+        resume_file = cfg.resolve_resume_path()
+        if resume_file is None:
+            print("还没告诉我在哪份简历上做分析。")
+            print("打开 config.yaml，在最后加一行（Windows 路径用正斜杠最稳）：")
+            print('  resume_path: "C:/Users/你的用户名/Desktop/简历/CV.docx"')
+            print("支持 .docx / .txt / .md；PDF 请先在 Word 里另存为 .docx。")
+            return 1
+
+        try:
+            resume_text = resume_mod.load_resume_text(resume_file)
+        except resume_mod.ResumeError as exc:
+            print(f"❌ {exc}")
+            return 1
+
+        try:
+            matcher = ResumeMatcher(cfg.llm, resume_text)
+        except MatchError as exc:
+            print(f"❌ {exc}")
+            return 1
+        signature = matcher.signature()
+
+        result = None if args.force else db.get_analysis(job.job_uid, signature)
+        if result:
+            print(f"（用上次的分析结果，{result.get('_created_at', '')[:10]}；"
+                  "要重算加 --force）\n")
+        else:
+            print(f"正在分析「{job.title}」…（要调模型，一般 20–60 秒，别关窗口）")
+            try:
+                result = matcher.analyze(job)
+            except MatchError as exc:
+                print(f"\n❌ {exc}")
+                return 1
+            db.save_analysis(job.job_uid, signature, matcher.model, result)
+
+        _print_analysis(job, result)
+        return 0
+    finally:
+        db.close()
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    """`hk_radar export`：把岗位与投递进展导成文件。
+
+    为什么默认三种都导：用户拿到这份东西的场景多半是「发给别人看」或
+    「自己留档」，而 HTML 能看、Excel 能改、PDF 好发——一次都不缺最省事。
+    三种都在本地生成，不上传任何地方。
+    """
+    from hk_job_radar import export as export_mod
+
+    cfg = load_config(require_runnable=False)       # noqa: F841 - 仅做配置校验
+    db = Database(str(_db_path()))
+    db.init_schema()
+    try:
+        formats = (("html", "xlsx", "pdf") if args.format == "all"
+                   else (args.format,))
+        out_dir = Path(args.out) if args.out else PROJECT_ROOT / "exports"
+        limit = args.limit if args.limit and args.limit > 0 else export_mod.DEFAULT_LIMIT
+        try:
+            written, problems = export_mod.export(
+                db, out_dir, formats=formats, days=args.days, limit=limit)
+        except export_mod.ExportError as exc:
+            print(f"❌ {exc}")
+            return 1
+
+        if written:
+            print(f"导出完成，文件在：{out_dir}")
+            for path in written:
+                size = path.stat().st_size / 1024
+                print(f"  · {path.name}  ({size:.0f} KB)")
+            print("\nHTML 双击就能看；PDF 能直接发；Excel 可以自己记账或改。")
+            print("（都在本机生成，没有上传到任何地方）")
+        for note in problems:
+            print(f"\n⚠️  {note}")
+
+        if args.open:
+            target = next((p for p in written if p.suffix == ".html"), None)
+            if target is not None:
+                _open_path(target)
+        return 0 if written else 1
+    finally:
+        db.close()
+
+
+def cmd_sync_applied(args: argparse.Namespace) -> int:
+    """`hk_radar sync-applied`：把招聘网站上的投递记录读回来。
+
+    为什么不做成每天自动跑：每次要起一个浏览器、翻五页，多一次请求就多一分
+    被反爬盯上的机会。你投完一批自己点一下，比定时轮询更合适，也更好理解
+    「它到底做了什么」。
+    """
+    from hk_job_radar import applied_sync
+
+    cfg = load_config(require_runnable=False)
+    db = Database(str(_db_path()))
+    db.init_schema()
+    try:
+        if args.dry_run:
+            print("试跑模式：只读不写，先看看会标哪些、哪些对不上。")
+        print("正在读取 JobsDB 的投递记录（Activity → Applied）……")
+        print("会打开一个浏览器窗口自动翻页，读完自己关掉，期间不用管它。")
+        if args.backfill:
+            print("补录模式：对不上的记录会作为新岗位写进库（只有标题/公司/日期）。")
+            if args.dry_run:
+                print("（同时开了 --dry-run，所以这次只统计，不写。）")
+        try:
+            report = applied_sync.sync(
+                db, cfg,
+                headless=True if args.headless else None,
+                max_pages=args.pages if args.pages > 0 else applied_sync.MAX_PAGES,
+                dry_run=args.dry_run,
+                backfill=args.backfill)
+        except applied_sync.SyncError as exc:
+            print(f"\n❌ {exc}")
+            return 1
+
+        print()
+        print(report.summary())
+        # 默认只列 8 条：真跑起来对不上的可能有几十条，一次刷满屏会盖住
+        # 上面那句「标记了几个」。想看全的加 --all。
+        for line in report.detail_lines(limit=999 if args.all else 8):
+            print(line)
+        if args.dry_run:
+            print("\n（试跑结束：数据库一个字都没改。去掉 --dry-run 才会真的标。）")
+        elif report.marked or report.backfilled:
+            print("\n打开工作台（双击 board.bat）就能在「已投」标签下看到它们。")
+        return 0
+    finally:
+        db.close()
+
+
+def _open_path(path: Path) -> None:
+    """用系统默认程序打开文件；打不开也不该让导出失败。"""
+    try:
+        if sys.platform.startswith("win"):
+            os.startfile(str(path))                 # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])   # noqa: S603,S607
+        else:
+            subprocess.Popen(["xdg-open", str(path)])  # noqa: S603,S607
+    except Exception as exc:                        # noqa: BLE001
+        print(f"（自动打开失败，请自己双击 {path.name}：{exc}）")
+
+
+def _list_match_candidates(db: Database) -> int:
+    """不带参数时：列出最近的高分岗位，让用户挑一个复制编号。"""
+    from hk_job_radar.workbench import VIEW_FILTERS
+
+    jobs = db.board_jobs(statuses=VIEW_FILTERS["pending"], limit=12)
+    if not jobs:
+        print("库里还没有待处理的岗位。先跑 `python run.py once` 抓一轮。")
+        return 1
+    print("挑一个岗位，复制编号再运行一次，例如：")
+    print("  python run.py match jobsdb:95291469\n")
+    for job in jobs:
+        score = f"{job.llm_score} 分" if job.llm_score is not None else "未打分"
+        print(f"  {job.job_uid:<24} {score:<7} {job.title[:34]} @ {job.company[:18]}")
+    print("\n（只列最近 12 条待处理岗位，按分数从高到低）")
+    return 0
+
+
+def _print_analysis(job, result: dict) -> None:
+    """把分析结果排成终端里能读的样子。
+
+    不输出 Markdown 表格：终端里 `|` 和中文混排对不齐，反而更难读。
+    """
+    bar = "─" * 62
+    print(bar)
+    print(f" {job.company} · {job.title}")
+    score = result.get("match_score")
+    summary = result.get("summary") or ""
+    print(f" 契合度：{score if score is not None else '—'} 分" +
+          (f" —— {summary}" if summary else ""))
+    print(bar)
+
+    matched = result.get("matched") or []
+    print("\n✅ 简历里已经对上的：")
+    if matched:
+        for item in matched:
+            print(f"   · {item}")
+    else:
+        print("   （没有明显对上的点，说明这份简历需要为这个岗位重写）")
+
+    gaps = result.get("gaps") or []
+    print("\n⚠️  缺口（按重要性排）：")
+    if not gaps:
+        print("   （没发现明显缺口）")
+    for i, gap in enumerate(gaps, 1):
+        print(f"   {i}. {gap.get('skill') or ''}")
+        if gap.get("why"):
+            print(f"      为什么重要：{gap['why']}")
+        if gap.get("how"):
+            print(f"      怎么补：{gap['how']}")
+
+    questions = result.get("interview") or []
+    if questions:
+        print("\n🗣  面试可能会问：")
+        for i, qa in enumerate(questions, 1):
+            print(f"   {i}. {qa.get('q') or ''}")
+            if qa.get("tests"):
+                print(f"      在考什么：{qa['tests']}")
+            if qa.get("tip"):
+                print(f"      回答要点：{qa['tip']}")
+    print("\n" + bar)
+    print("提醒：「怎么补」只能基于简历里已有的东西改写。如果它建议的是新增经历，"
+          "先真的做了再写上去。")
+    print(bar)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hk_radar",
@@ -537,8 +909,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "test", help="给已启用的通道发一条测试消息（5 秒验证配置是否正确）")
     p_notify_test.set_defaults(func=cmd_notify_test)
 
-    p_apply = sub.add_parser("apply", help="投递副驾（T05 交付）")
+    p_apply = sub.add_parser("apply", help="投递副驾：打开申请页、答好选择题，提交由你点")
     p_apply.add_argument("job_id", help="岗位 ID（job_uid，如 jobsdb:12345678）")
+    p_apply.add_argument("--probe", action="store_true",
+                         help="试跑：只报告「本来会怎么选」，不往页面写任何值")
     p_apply.set_defaults(func=cmd_apply)
 
     p_login = sub.add_parser("login", help="打开浏览器手动登录指定站点（首次配置用）")
@@ -547,6 +921,52 @@ def _build_parser() -> argparse.ArgumentParser:
     p_login.add_argument("--cookie", action="store_true",
                          help="换一种方式：复制你自己浏览器里的 Cookie 登录（绕开验证码）")
     p_login.set_defaults(func=cmd_login)
+
+    p_board = sub.add_parser(
+        "board", help="打开岗位工作台（本地网页看板，点按钮记投递进度）")
+    p_board.add_argument("--port", type=int, default=0,
+                         help="指定端口（默认从 8787 起自动找一个空的）")
+    p_board.add_argument("--no-browser", action="store_true",
+                         help="不自动打开浏览器，只打印地址")
+    p_board.set_defaults(func=cmd_board)
+
+    p_match = sub.add_parser(
+        "match", help="简历与岗位逐项对照：缺口清单 + 可能的面试问题")
+    p_match.add_argument("job_uid", nargs="?", default=None,
+                         help="岗位编号（形如 jobsdb:95291469）；省略则列出可选的岗位")
+    p_match.add_argument("--force", action="store_true",
+                         help="忽略上次结果、重新调用模型（简历改了不必加，指纹会自动失效）")
+    p_match.set_defaults(func=cmd_match)
+
+    p_export = sub.add_parser(
+        "export", help="把岗位与投递进展导出成 HTML / Excel / PDF")
+    p_export.add_argument("--format", "-f", default="all",
+                          choices=["all", "html", "xlsx", "pdf"],
+                          help="导出格式，默认三种都导")
+    p_export.add_argument("--out", "-o", default=None,
+                          help="输出目录（默认是项目下的 exports）")
+    p_export.add_argument("--days", type=int, default=30,
+                          help="统计口径看最近多少天（默认 30）")
+    p_export.add_argument("--limit", type=int, default=0,
+                          help="明细最多导多少条（默认 500）")
+    p_export.add_argument("--open", action="store_true",
+                          help="导出后自动打开 HTML")
+    p_export.set_defaults(func=cmd_export)
+
+    p_sync = sub.add_parser(
+        "sync-applied",
+        help="读取 JobsDB 上的投递记录，自动把对应岗位标成「已投」")
+    p_sync.add_argument("--dry-run", action="store_true",
+                        help="只读不写：先看看会标哪些、哪些岗位对不上")
+    p_sync.add_argument("--pages", type=int, default=0,
+                        help="最多读几页（默认按站点上限，一般 5 页就到底）")
+    p_sync.add_argument("--headless", action="store_true",
+                        help="不显示浏览器窗口（默认显示，过一次验证更容易）")
+    p_sync.add_argument("--all", action="store_true",
+                        help="列出全部「库里找不到」的岗位（默认只显示前 8 条）")
+    p_sync.add_argument("--backfill", action="store_true",
+                        help="对不上但站点给了岗位编号的，补录进库（只有标题/公司/日期）")
+    p_sync.set_defaults(func=cmd_sync_applied)
     return parser
 
 

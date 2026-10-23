@@ -1,12 +1,17 @@
 # HK Job Radar · 香港岗位雷达
 
-> **一个本地运行、AI 辅助的香港求职自动化工具。**
-> 自动监控三大招聘网站的新岗位 → 关键词初筛 → 大模型打分 → 每日推送（企业微信 / WxPusher / 邮件 / Telegram）→ 半自动填表。
+> **一个本地运行、AI 辅助的香港求职自动化工具。完全免费，没有付费版本。**
+> 自动监控三个招聘网站 + 各大企业官网直招的新岗位 → 关键词初筛 → 大模型打分 → 每日推送（企业微信 / WxPusher / 邮件 / Telegram）→ 半自动填表。
 > 数据不出本机，合规克制，配置驱动。
 >
-> **Your personal, AI-assisted job search automation for Hong Kong.**
-> Watch new jobs across three boards → filter → score → daily push (WeCom / WxPusher / Email / Telegram) → semi-auto apply.
+> **Your personal, AI-assisted job search automation for Hong Kong. Free, with no paid tier.**
+> Watch new jobs across three job boards and company career sites → filter → score → daily push (WeCom / WxPusher / Email / Telegram) → semi-auto apply.
 > Local-first, privacy-first, compliance-first.
+
+<p align="center">
+  <img src="docs/img/hero.png" width="880"
+       alt="高分岗位推到 Telegram → 本地看板按分数排开 → 投递副驾预先填好雇主问题">
+</p>
 
 <p align="center">
   <img alt="Python" src="https://img.shields.io/badge/Python-3.10%2B-blue">
@@ -14,6 +19,9 @@
   <img alt="Region" src="https://img.shields.io/badge/Region-Hong%20Kong-red">
   <img alt="Self-hosted" src="https://img.shields.io/badge/Deploy-Local%20only-orange">
   <img alt="Platform" src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-lightgrey">
+  <a href="https://github.com/prui0474/hk-job-radar/stargazers">
+    <img alt="GitHub stars" src="https://img.shields.io/github/stars/prui0474/hk-job-radar?style=social">
+  </a>
 </p>
 
 > 🍎 **On a Mac?** One-click install via `.command` scripts —
@@ -33,7 +41,9 @@
 ### 这是什么
 
 香港岗位雷达是一个**本地运行的求职助手**：定时监控 **JobsDB / LinkedIn / Indeed**
-三大网站的新岗位，按你的关键词初筛，用**大模型（DeepSeek）对照你的个人画像打分**，
+三个招聘网站，外加**企业官网直招**（走 Workday 招聘系统的机构，内置宏利、永明、
+中信银行国际等五家，也能自己加），按你的关键词初筛，
+用**大模型（DeepSeek）对照你的个人画像打分**，
 每天推送到**你自选的一个通道**——企业微信群机器人 / WxPusher / 邮件（HTML 岗位卡片）/
 Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾**，
 帮你填申请表——但**最后的「提交」永远由你亲手点击**。
@@ -53,7 +63,7 @@ Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾*
 
 | 痛点 | 本工具怎么解决 |
 | --- | --- |
-| 打开 JobsDB 翻一遍、再 LinkedIn、再 Indeed，两个多小时过去了，真正投出去的也就那么几份 | 一条本地流水线按点盯住三个站，你只在日报里挑 |
+| 打开 JobsDB 翻一遍、再 LinkedIn、再 Indeed，两个多小时过去了，真正投出去的也就那么几份 | 一条本地流水线按点盯住三个站和企业官网，你只在日报里挑 |
 | 翻了一整个下午，一百个岗位里真正能投的就那么几个，其余全在耗你的时间和耐心 | 关键词初筛 + LLM 相关度打分（0–100），能投的排在最前面 |
 | 重复填申请表浪费时间 | 半自动填表 + 筛选问题答案生成 |
 | （非本地学生）搞不清哪些岗位学生签能合法做 | 内置签证合规过滤 |
@@ -65,6 +75,7 @@ flowchart LR
     A[JobsDB] --> D[抓取]
     B[LinkedIn] --> D
     C[Indeed] --> D
+    W[企业官网 Workday] --> D
     D --> E[关键词初筛]
     E --> F[大模型打分]
     F --> G[SQLite 去重]
@@ -73,6 +84,7 @@ flowchart LR
 ```
 
 1. **抓取** — 每个开启的站都按随机的人为延迟抓，并限制单站每日页数（防封号优先）。
+   企业官网走的是各家招聘系统自己的公开接口（Workday），比翻网页稳，也不用过人机验证。
 2. **初筛** — 先用关键词和同义词做便宜的匹配，把噪音丢掉，这样只有值得看的岗位才会
    送进大模型，省的是你自己的 API 钱。
 3. **打分** — DeepSeek 对着你的个人画像给每个岗位打 0–100 分，顺带读一遍岗位写明的
@@ -81,53 +93,59 @@ flowchart LR
 4. **去重入库** — SQLite 用「岗位 ID + 归一化 URL」双键去重，保证同一个岗位不会被
    推第二遍。
 5. **推送** — 按分数排序的日报（电脑开着就 09:00 发，当天第一次开机也会补发）；
-   新出现的 ≥80 分岗位是高级版的实时秒推。
+   新出现的 ≥80 分岗位会立刻单独推一条，不用等到第二天。
 6. **投递（可选）** — 帮你填表、传简历、起草筛选问题的答案，然后请你逐项核对、
    **自己点「提交」**。
 
 ### 核心优点
 
-- 🔎 三站监控，各自可开关
-- 🧠 LLM 打分（DeepSeek，OpenAI 兼容，可换其他服务）
-- 📬 **四个推送通道，挑一个顺手的就行**——企业微信 / WxPusher / 邮件（HTML 卡片）/
-  Telegram。其中 Telegram 多一层反馈：日报里每个岗位都带 ✅ / ❌ 按钮，点一下就把
-  「感兴趣 / 不感兴趣」记进本机数据库，岗位状态跟着变成「感兴趣」或「已排除」——
-  一条条攒下来，就是你自己看得懂的求职偏好档案
-- ✍️ 半自动投递，绝不自动提交
+- 🔎 **四个来源，各自可开关**——JobsDB / LinkedIn / Indeed 三个招聘站，加上企业官网（Workday）
+- 🧠 **LLM 打分**（DeepSeek，OpenAI 兼容，想换别家也行）：按你的画像逐条打分，附一句理由
+- 📬 **四个推送通道，爱开几个开几个**——企业微信 / WxPusher / 邮件（HTML 卡片）/ Telegram，
+  同时开也行（Telegram 看推送、邮件留个档）。其中 Telegram 多一层反馈：日报里每个岗位都带
+  ✅ / ❌ 按钮，点一下就把「感兴趣 / 不感兴趣」记进本机数据库，岗位状态跟着变成「感兴趣」
+  或「已排除」——一条条攒下来，就是你自己看得懂的求职偏好档案
+- ⚡ **高分岗位抓到就推**；日报想发几份也由你定，早晚各一份，
+  或者只在真有新岗位落地时才响。香港的岗位经常上午挂出来、下午就约面，
+  这个差别直接体现在你投得早不早
+- ♻️ **同一个岗位在几个站各挂一份，只当一份看**——公司名与职位名归一化后比对，
+  日报里两条都留但标出「同一岗位另见」，实时推送只响一次，不会同一个职位把你叫起来两回
+- 🗂️ **积压的岗位摊在一张页面上挑，而不是在聊天记录里往上翻**——工作台按分数排开，
+  可以按来源 / 分数 / 新鲜度筛，看过的、标过的、不想看的各自归位
+- 📈 **市场在怎么变、你投到了哪一步，两件事放在一起看**——趋势看板盯着你关注的方向：
+  这周放出多少岗位、集中在哪些薪资区间、哪几家在连续招。投递那边不用来回翻记录：
+  一张本地看板把岗位摊成卡片，点标题直接跳回原站去投；投完在卡片上点「已投」，约到了点
+  「约面」，告一段落点「结束」——公司、岗位、日期、走的哪个站自动留档，
+  投出去多少、有多少回音，图上直接看
+- ✍️ **投递副驾**——申请页上那些「你有几年经验」「期望月薪多少」的选择题，按你的口径替你
+  选好，停在最后一页等你核对；**提交那一下永远是你点**
+- 🔁 **已投记录同步**——你已经投过的岗位，从招聘网站读回来一次性标好，不用回卡片一张张点
+- 🎯 **投之前知道自己差在哪，投之后知道会被问什么**——简历和 JD 逐项对照，指出它要、
+  而你没写出来的那句该补在哪；面试预测按这条 JD 把可能的问题先过一遍
+- 📄 **最后一份能直接发出去的东西**——精美 HTML 报告，也能导出 Excel / PDF，
+  给导师、给朋友，或者自己留档
+- 🎓 按求职阶段自动过滤岗位类型（`career_stage`：学生 / 已毕业 / 两者）
 - 🛡️ 防封号：随机延迟、每日页数上限、指数退避，不破解验证码
 - 🧩 配置驱动，可复用到任何求职目标
-- 🎓 按求职阶段自动过滤岗位类型（`career_stage`：学生 / 已毕业 / 两者）
-- 🔓 **免费版就能跑通全流程**——三个站、关键词初筛、AI 打分、日报推送、半自动投递，
-  全都在免费版里；不需要服务器，数据不出本机。
-- ⚡ **高级版：同一套雷达，但这七件事是免费版做不到的**——
-  - **一条关键词表，变成三条并行的求职线**——数据、量化、银行管培各挂一套关键词和分数门槛，
-    早上看数据岗、下午看管培，互不覆盖，也不用改一次配置就重跑一遍。
-  - **岗位早知道**——≥80 分的新岗位抓到就推，不用等到第二天早上 09:00；日报多久发一次
-    也由你定，早晚各一份，或者只在真有新岗位落地时才响。香港的岗位经常上午挂出来、
-    下午就约面，这个差别直接体现在你投得早不早。
-  - **关键词想铺多少铺多少，四个通道也能同时开**——免费版是 7 个关键词、1 个通道，
-    想加第八个就得先删掉一个。
-  - **积压的岗位摊在一张页面上挑，而不是在聊天记录里往上翻**——图形工作台按分数排开，
-    看过的、标过的、不想看的各自归位。
-  - **市场在怎么变、你投到了哪一步，两件事放在一起看**——趋势看板盯着你关注的方向：
-    这周放出多少岗位、集中在哪些薪资区间、哪几家在连续招。投递那边不用来回翻记录：
-    一张本地看板把岗位摊成卡片，点标题直接跳回原站去投；投完在卡片上点「已投」，约到了点
-    「约面」，告一段落点「结束」——公司、岗位、日期、走的哪个站、用的哪版简历自动留档，
-    投出去多少、有多少回音，图上直接看。
-  - **投之前知道自己差在哪，投之后知道会被问什么**——简历和 JD 逐项对照，指出它要、
-    而你没写出来的那句该补在哪；面试预测按这条 JD 把可能的问题先过一遍。
-  - **最后一份能直接发出去的东西**——精美 HTML 报告，也能导出 Excel / PDF，
-    给导师、给朋友，或者自己留档。
+- 🔓 **不需要服务器，数据不出本机**——整套东西都在你自己电脑上跑
+
+### 实际效果
+
+真实录屏（本地库里 394 条岗位）：筛出 80 分以上 → 展开岗位描述 → 标记已投 → 撤销。
+
+<p align="center">
+  <img src="docs/img/demo.gif" width="880" alt="岗位工作台操作演示">
+</p>
 
 ### 局限
 
 - 有一定技术门槛——不过「一键安装脚本」已省去大部分；仍需自备 DeepSeek key 和配好一个推送通道
   （Windows 双击 `install.bat`，macOS 双击 `install.command`，流程一样）
 - 依赖第三方站点，抓取可能被限流或临时封锁。**LinkedIn 需要真实账号**并登录一次；
-  JobsDB 和 Indeed 不需要账号，只要过一次人机验证
+  JobsDB、Indeed 和企业官网不需要账号，只要过一次人机验证（企业官网连这一步都没有）
 - 不保证 100% 覆盖——它是「雷达」，不是「全量抓取」
-- **免费版有额度上限**——最多 7 个关键词、1 个推送通道、每天 1 次日报，不含实时秒推。
-  完整对照见下方「免费版与高级版」一节。
+- **关键词要靠你自己想**——它只会按你写的词去找，写得太窄就会漏。
+  好消息是没有数量限制，把同义词、缩写、中英文写法都铺上去就行。
 
 ### 网络要求
 
@@ -138,16 +156,16 @@ flowchart LR
 | 抓岗位 | `hk.jobsdb.com` | 开启 JobsDB（带 Cloudflare 防护，要过一次人机验证） |
 | 抓岗位 | `hk.indeed.com` | 开启 Indeed |
 | 抓岗位 | `www.linkedin.com` | 开启 LinkedIn（需要账号） |
+| 抓岗位 | 各企业自己的招聘域名（如 `*.myworkdayjobs.com`） | 开启「企业官网」来源 |
 | AI 打分 | `api.deepseek.com` | 始终需要 |
 | 推送 | `api.telegram.org` | 选了 Telegram |
 | 推送 | `qyapi.weixin.qq.com` | 选了企业微信 |
 | 推送 | `wxpusher.zjiecode.com` | 选了 WxPusher |
 | 推送 | 你的邮箱 SMTP 服务器 | 选了邮件 |
-| 过人机验证 | `challenges.cloudflare.com`、`www.google.com` | 始终需要（验证框要先下载脚本才画得出来） |
 
-**地区由网址决定，不由 IP 决定。** 三个站抓的都是 `hk.` 子域、或用
-`location: Hong Kong` 参数定位，所以不论你人在香港、英国、加拿大还是内地，
-抓回来的都是**香港的岗位**。
+**地区由网址决定，不由 IP 决定。** 三个招聘站抓的都是 `hk.` 子域、或用
+`location: Hong Kong` 参数定位；企业官网那边按城市筛，只要 `Hong Kong` 的。
+所以不论你人在香港、英国、加拿大还是内地，抓回来的都是**香港的岗位**。
 
 | 你在哪 | 情况 |
 | --- | --- |
@@ -197,6 +215,9 @@ flowchart LR
 
 1. 安装 [Mac 版 Python 3.10+](https://www.python.org/downloads/macos/)
    （Mac 自带的那个太旧，不够用）
+   > **系统要求：macOS 11（Big Sur）或更新**——python.org 从 Python 3.10 起只提供
+   > macOS 11 及以上的安装包；10.15 及更早的系统装不上官方 Python，不建议硬来。
+   > 查版本：屏幕左上角 Apple 菜单 →「关于本机」。
 2. **Code → Download ZIP**，解压后把文件夹挪到 `/Users/你的名字/` 下
    （**别放在桌面/文稿/下载里运行**，那三个位置被系统保护，浏览器可能报
    `Operation not permitted`）
@@ -232,7 +253,7 @@ Copy-Item data/profiles/profile.example.yaml data/profiles/profile.yaml
 $env:DEEPSEEK_API_KEY = "sk-..."   # 填自己的 key
 # 编辑 config.yaml：设 notify.channels（wecom / wxpusher / email / telegram 任选其一）并填好凭据
 
-python run.py login jobsdb        # 首次过盾/登录（三站各跑一次）
+python run.py login jobsdb        # 首次过盾/登录（JobsDB / LinkedIn / Indeed 各一次，企业官网不用）
 python run.py login linkedin
 python run.py login indeed
 ```
@@ -267,7 +288,7 @@ python run.py apply <job_uid>     # 投递副驾（半自动填表）
 | 配置项 | 作用 |
 | --- | --- |
 | `sources` | 开启哪几个招聘站 |
-| `keywords` | 你要找的岗位名称（免费版最多 7 个） |
+| `keywords` | 你要找的岗位名称，数量不限 |
 | `graduate_keywords` | 毕业后的全职岗位（管理培训生等）；与上面合计不超过 7 个 |
 | `career_stage` | `student` = 只抓实习/兼职 · `graduate` = 全职 · `both` = 两者 |
 | `job_types` | 高级覆盖项；正常由 `career_stage` 自动推导，一般不用手填 |
@@ -276,10 +297,11 @@ python run.py apply <job_uid>     # 投递副驾（半自动填表）
 | `keyword_rotation` | 每轮搜几个关键词（按你每天开机多久来调） |
 | `daily_limits` | 单站每个香港自然日的页数上限 |
 | `location` | 目标地区，默认 Hong Kong |
-| `score_threshold` / `realtime_threshold` | 60 = 进日报的分数线；80 = 实时推送线（高级版） |
+| `score_threshold` / `realtime_threshold` | 60 = 进日报的分数线；80 = 抓到就单独推的分数线 |
 | `max_job_age_days` / `report_max_age_days` | 2 = 只抓最近 2 天发布的；3 = **无法复核**的站点（LinkedIn）入库超过 3 天还没推出去就不再推送 |
 | `liveness_check` | 推送前打开详情页确认还在招（Indeed / JobsDB）。开启时能复核的站点不再按天数砍，只留 30 天硬上限 |
 | `report_time` | 日报时间（香港时间） |
+| `resume_path` | 简历文件路径（`.docx` / `.txt` / `.md`）。留空＝不用「简历-JD 差距分析」，其它一切照常 |
 
 `data/profiles/profile.yaml` 的 `background:` 段是 AI 打分的依据，**必须换成你自己的**
 技能、经历与目标岗位。若该段缺失、或仍是一堆 `<占位符>`，程序会退回一段通用描述来打分，
@@ -292,59 +314,43 @@ python run.py apply <job_uid>     # 投递副驾（半自动填表）
 - **按求职阶段过滤**——默认 `career_stage: student` 只抓实习/兼职（学生签证合规）；
   拿到 IANG 后改成 `graduate` 或 `both` 即可。
 
-### 免费版与高级版
+### Star 统计
 
-跑起一条完整的岗位雷达所需的代码都在这份仓库里——不需要服务器，数据也不出本机。
+<a href="https://star-history.com/#prui0474/hk-job-radar&Date">
+  <img src="https://api.star-history.com/svg?repos=prui0474/hk-job-radar&type=Date"
+       alt="Star History" width="620">
+</a>
 
-| | 免费版 | 高级版 |
-| --- | --- | --- |
-| 招聘网站 | 全部 | 全部 |
-| 关键词 | 最多 **7 个** | 不限 |
-| 推送通道 | **1 个**——企业微信 / WxPusher / 邮件 / Telegram 任选 | 全部同时开启 |
-| 每日日报 | **每天 1 次**（定时或手动） | 自定义频率，一天多次 |
-| ≥80 分实时秒推 | — | ✅ |
-| 个人画像 | 1 份 | 多份（多方向并行） |
-| 配置向导 · 一键自检 | ✅ 免费 | ✅ |
-| 图形岗位工作台 | — | ✅ |
-| 趋势看板 · 投递管理 | — | ✅ |
-| 简历-JD 差距分析 · 面试预测 | — | ✅ |
-| 精美 HTML 报告 · 导出 Excel/PDF | — | ✅ |
+如果你对这个项目感兴趣，点个 star 或者随缘打赏 就是最直接的鼓励。
 
-**表格里每一行到底是什么意思**
+### 支持这个项目
 
-- **招聘网站** — 两个版本一样，三个站全部开放，这里没有做任何保留。
-- **关键词** — 程序拿去搜索的岗位名称。免费版最多 7 个（普通关键词 + 毕业生关键词合计），
-  想把 data analyst / business analyst / data scientist / risk analyst / quant /
-  management trainee / investment banking 一起铺，正好卡在上限；高级版不限个数，
-  同义词、缩写、中英文两种写法都可以一起铺开。
-- **推送通道** — 日报同时发到几处。免费版选一个；高级版四个随你选，哪个方便用哪个。
-- **每日日报** — 免费版每天固定一份；高级版由你定节奏：早晚各一份，或者只在有新岗位时才发。
-- **≥80 分实时秒推** — 免费版要等下一份日报才看见；高级版抓到几秒内就推到你手机上。
-  香港的岗位经常上午挂出来、下午就约面，这个差别直接体现在你投得早不早。
-- **个人画像** — 画像是「你是谁」（技能、经历、目标岗位），AI 拿它当打分的依据。免费版一份；
-  高级版可以同时挂「数据分析」和「银行管培」两套，各自用自己的关键词和分数门槛，互不覆盖。
-- **配置向导 · 一键自检** — 两个版本完全一样，不限次数、不砍功能。
-- **图形岗位工作台** — 免费版是在聊天窗口或邮件里一条条往下看；高级版给一个本地页面，
-  把积压的岗位摊开挑，标过的状态一眼看得见。
-- **趋势看板 · 投递管理** — 把每个岗位记到「已投 / 约面 / 结束」，再用图表看这段时间投了
-  多少、回了多少——哪条方向真的在出结果，一目了然。
-- **简历-JD 差距分析 · 面试预测** — 拿某一条 JD 和你的简历逐项对照，指出它要、而你没写出来的
-  技能该补哪一句；再针对这个岗位预演会被问什么。
-- **精美 HTML 报告 · 导出 Excel / PDF** — 把一周或一个月的岗位整理成可以直接发出去的报告，
-  给导师、给朋友看，或者自己留档。
+如果你用它拿到了面试、或者只是觉得省了时间，可以请我喝杯咖啡。万分感谢你的支持，祝你早日找到高薪的心仪offer！
 
-**免费版让你不错过岗位，高级版让你把 offer 拿下来。**
+<details>
+<summary>☕ 随缘打赏（点击展开收款码）</summary>
 
-祝你早日拿到心仪的高薪 offer！！！
+<p align="center">
+  <img src="docs/donate/wechat.png" width="148" alt="微信支付">
+  <img src="docs/donate/wechat-hk.png" width="148" alt="WeChat Pay HK">
+  <img src="docs/donate/alipay.png" width="148" alt="支付宝">
+  <img src="docs/donate/alipay-hk.png" width="148" alt="AlipayHK">
+</p>
+
+<p align="center">
+  <sub>微信支付 · WeChat Pay HK · 支付宝 · AlipayHK</sub>
+</p>
+
+</details>
 
 ### 联系
 
-有问题、想反馈，或者想用高级版：邮箱 **P_RUI@outlook.com**
+有问题、想反馈，或者想一起改这个项目：邮箱 **P_RUI@outlook.com**
 （标题里带一句「岗位雷达」，我一眼就能认出来）。
 
 ### Contact
 
-Questions, feedback, or interested in the Pro version: email **P_RUI@outlook.com**
+Questions, feedback, or want to help improve it: email **P_RUI@outlook.com**
 (put "HK Job Radar" in the subject line).
 
 ### License
@@ -358,8 +364,9 @@ Questions, feedback, or interested in the Pro version: email **P_RUI@outlook.com
 ### What it is
 
 HK Job Radar is a **self-hosted job search assistant** for the Hong Kong market. It
-periodically watches **JobsDB / LinkedIn / Indeed** for new postings, filters them by
-your keywords, scores each one with an **LLM against your personal profile**, and
+periodically watches **JobsDB / LinkedIn / Indeed** as well as **company career sites**
+running on Workday (Manulife, Sun Life, CNCBI and more built in), filters them by your
+keywords, scores each one with an **LLM against your personal profile**, and
 delivers a **daily digest to whichever channel you pick** — WeCom group bot, WxPusher,
 email (HTML job cards), or Telegram (with ✅/❌ buttons). It also ships a
 **semi-automatic application assistant** that fills in forms for you — the final
@@ -383,7 +390,7 @@ automates the repetitive part of job hunting: *finding and shortlisting*.
 
 | Pain point | How HK Job Radar helps |
 | --- | --- |
-| Three boards, three search forms, three rounds of scrolling — open JobsDB, then LinkedIn, then Indeed, and two hours are gone for maybe three applications actually sent | A local pipeline watches all three on schedule; you only show up for the shortlist |
+| Three boards, three search forms, three rounds of scrolling — open JobsDB, then LinkedIn, then Indeed, and two hours are gone for maybe three applications actually sent | A local pipeline watches all three (plus company career sites) on schedule; you only show up for the shortlist |
 | A whole afternoon of scrolling: out of a hundred postings, perhaps five are worth applying to — the other ninety-five quietly eat your day | Keyword pre-filter + LLM relevance scoring (0–100), so the roles that fit open the digest |
 | Re-typing the same application form wastes hours | Semi-auto form filler + screening-answer generator |
 | (Non-local students) unclear which roles are legal on a student visa | Built-in visa-compliance filtering (internship/part-time; management-trainee handled separately) |
@@ -395,6 +402,7 @@ flowchart LR
     A[JobsDB] --> D[Scraper]
     B[LinkedIn] --> D
     C[Indeed] --> D
+    W[Company career sites] --> D
     D --> E[Keyword Filter]
     E --> F[LLM Scoring]
     F --> G[SQLite Dedup]
@@ -403,7 +411,9 @@ flowchart LR
 ```
 
 1. **Scrape** — each enabled source is fetched with random human-like delays and a
-   per-site daily page cap (anti-ban first).
+   per-site daily page cap (anti-ban first). Company career sites are read through
+   their own public job API (Workday): steadier than page scraping, and no human
+   verification involved.
 2. **Filter** — cheap keyword + synonym matching drops noise so the LLM only sees
    worthwhile roles.
 3. **Score** — DeepSeek scores each role 0–100 against your profile and also flags any
@@ -413,51 +423,59 @@ flowchart LR
 4. **Dedup + store** — SQLite double-key (job ID + normalized URL) guarantees no
    duplicate pushes.
 5. **Notify** — a digest sorted by score (09:00 if the PC is on, otherwise the first
-   time you power on that day). Instant push for new roles ≥ 80 is a Pro feature.
+   time you power on that day). Roles at ≥ 80 are also pushed the moment they are found.
 6. **Apply (optional)** — fills forms + uploads resume + drafts screening answers,
    then asks you to review every field and **click submit yourself**.
 
 ### Key features
 
-- 🔎 **3-source monitoring** — JobsDB, LinkedIn, Indeed (each toggleable).
-- 🧠 **LLM scoring** — DeepSeek (OpenAI-compatible; swap `base_url` for others).
-- 📬 **4 push channels — pick whichever fits your day** — WeCom group bot / WxPusher /
-  Email (HTML job cards) / Telegram. Telegram adds a feedback layer: every job in the
-  digest carries ✅ / ❌ buttons, one tap records *interested / not interested* in your
-  local database and flips that job's status, so your own taste accumulates as a record
-  you can read back.
-- ✍️ **Semi-auto apply** — never auto-submits; final click is always human.
+- 🔎 **4 sources, each toggleable** — JobsDB / LinkedIn / Indeed plus company career sites (Workday).
+- 🧠 **LLM scoring** — DeepSeek (OpenAI-compatible; swap `base_url` for others), with a
+  one-line reason attached to every score.
+- 📬 **4 push channels — turn on as many as you like** — WeCom group bot / WxPusher /
+  Email (HTML job cards) / Telegram. All at once is fine (Telegram for the ping, email for
+  the archive). Telegram adds a feedback layer: every job in the digest carries ✅ / ❌
+  buttons, one tap records *interested / not interested* in your local database and flips
+  that job's status, so your own taste accumulates as a record you can read back.
+- ⚡ **High-scoring roles are pushed the moment they are found.** Hong Kong roles often go
+  up in the morning and are interviewing by the afternoon — this is the difference between
+  applying early and applying late. Digest cadence is yours too: twice a day, or only when
+  something new actually lands.
+- ♻️ **One posting listed on several boards counts once** — company and title are
+  normalised and compared; the digest keeps both lines but marks "same job, see #N",
+  and instant push fires once instead of waking you up twice for the same role.
+- 🗂️ **The backlog laid out on one page instead of scrolled up in a chat** — a graphical
+  workspace sorted by score, filterable by source / score / freshness.
+- 📈 **How the market moves and how far you got, side by side** — the trend board watches
+  your directions: how many roles came out this week, which salary bands they cluster in,
+  which employers keep posting. The application side is just clicks: a local board lays
+  the roles out as cards, and applied / interview / closed is one click on the card.
+  One glance shows what went out and what came back.
+- ✍️ **Application co-pilot** — picks the answers to those screening questions (years of
+  experience, expected salary, right to work), stops on the last page for you to check.
+  **The final click is always yours.**
+- 🔁 **Applied-jobs sync** — reads back the applications you already sent on JobsDB and
+  marks them in one go, instead of clicking each card.
+- 🎯 **Know the gap before you apply, know the questions after** — resume-vs-JD comparison
+  points at the line the JD wants and your resume never shows; interview prep rehearses
+  the questions that JD invites.
+- 📄 **And one thing you can actually send** — a polished HTML report, exportable to
+  Excel / PDF, for a mentor, a friend, or your own records.
+- 🎓 **Career-stage aware** — `career_stage: student / graduate / both` sets the
+  employment types automatically (student visa → internship/part-time only).
 - 🛡️ **Anti-ban** — random delays, daily page caps, exponential backoff, no CAPTCHA
   cracking, no Cloudflare bypass.
 - 🧩 **Config-driven** — keywords, location, career stage, profile, thresholds all in YAML.
-- 🎓 **Career-stage aware** — `career_stage: student / graduate / both` sets the
-  employment types automatically (student visa → internship/part-time only).
-- 🔓 **The free build runs the whole pipeline** — three boards, keyword filter, LLM
-  scoring, digest push, semi-auto apply. No server involved, nothing leaves your machine.
-- ⚡ **The Pro pack: the same radar — seven things the free build cannot do:**
-  - **One keyword list becomes three job hunts running in parallel** — data / quant /
-    bank MT each carry their own keywords and threshold; look at data roles in the
-    morning and MT roles after lunch, without overwriting config and re-running.
-  - **You hear about a role while it is still fresh** — instant push at ≥80 instead of
-    waiting for tomorrow's 09:00 digest, and digests at whatever rhythm you set: twice
-    a day, or only when something new actually lands. Hong Kong roles often go up in
-    the morning and are interviewing by the afternoon — this is the difference between
-    applying early and applying late.
-  - **As many keywords as you need, and all four channels at once** — the free build gives
-    you seven keywords and one channel: adding an eighth means dropping one.
-  - **The backlog laid out on one page instead of scrolled up in a chat** — a graphical
-    workspace sorted by score, with seen / marked / passed roles filed away.
-  - **How the market moves and how far you got, side by side** — the trend board watches
-    your directions: how many roles came out this week, which salary bands they cluster
-    in, which employers keep posting. The application side is just clicks: a local board
-    lays the roles out as cards, a click on the title jumps back to the original posting,
-    and applied / interview / closed is one click on the card. Company, role, date, board
-    and resume version file themselves; one glance shows what went out and what came back.
-  - **Know the gap before you apply, know the questions after** — resume-vs-JD comparison
-    points at the line the JD wants and your resume never shows; interview prep rehearses
-    the questions that JD invites.
-  - **And one thing you can actually send** — a polished HTML report, exportable to
-    Excel / PDF, for a mentor, a friend, or your own records.
+- 🔓 **No server involved, nothing leaves your machine.**
+
+### See it in action
+
+Recorded from the real board (394 jobs in the local database): filter to 80+ → expand a job
+description → mark it applied → undo.
+
+<p align="center">
+  <img src="docs/img/demo.gif" width="880" alt="Job board demo">
+</p>
 
 ### Limitations
 
@@ -465,24 +483,25 @@ flowchart LR
   on Windows, `install.command` on macOS) removes most of it; you still need a
   DeepSeek key and one configured push channel.
 - **Depends on third-party sites** — scraping may be rate-limited or blocked at any
-  time. LinkedIn needs a real account and a one-time login; JobsDB and Indeed only need
-  a one-time human verification pass.
+  time. LinkedIn needs a real account and a one-time login; JobsDB, Indeed and company career
+  sites need no account at all — the first two just need one human-verification pass.
 - **Not 100% coverage** — it's a radar, not a guarantee of every posting.
-- **The free tier is capped** — up to 7 keywords, 1 push channel, 1 digest per day,
-  no instant push. See *Free vs Pro* below for the full comparison.
+- **Keywords are on you** — it only looks for what you write, so a narrow list means
+  missed roles. There is no cap, so pile on synonyms, abbreviations and the Chinese /
+  English variants of the same title.
 
 ### Network requirements
 
 The tool talks to these hosts and nothing else:
 
 `hk.jobsdb.com` · `hk.indeed.com` · `www.linkedin.com` · `api.deepseek.com` ·
-`challenges.cloudflare.com` · `www.google.com` — plus one push channel
-(`api.telegram.org` / `qyapi.weixin.qq.com` / `wxpusher.zjiecode.com` / your SMTP
-server).
+your employers' own hiring domains (`*.myworkdayjobs.com` when that company runs on
+Workday) — plus one push channel (`api.telegram.org` / `qyapi.weixin.qq.com` /
+`wxpusher.zjiecode.com` / your SMTP server).
 
 **Region is decided by URL, not by your IP.** All three boards are queried through
-their Hong Kong subdomain or a `location: Hong Kong` parameter, so you get Hong Kong
-postings wherever you are.
+their Hong Kong subdomain or a `location: Hong Kong` parameter, and company career
+sites are filtered down to `Hong Kong` — so you get Hong Kong postings wherever you are.
 
 | Where you are | What to expect |
 | --- | --- |
@@ -619,7 +638,7 @@ Everything is in `config.yaml` (see `config.example.yaml` for commented defaults
 | Key | What it does |
 | --- | --- |
 | `sources` | which boards to enable |
-| `keywords` | your target job titles (up to 7 on the free tier) |
+| `keywords` | your target job titles, no limit on how many |
 | `graduate_keywords` | post-graduation full-time roles (management trainee, …) |
 | `career_stage` | `student` = internship/part-time · `graduate` = full-time · `both` |
 | `job_types` | advanced override; normally derived from `career_stage` |
@@ -628,10 +647,11 @@ Everything is in `config.yaml` (see `config.example.yaml` for commented defaults
 | `keyword_rotation` | how many keywords to search per cycle (tune to your uptime) |
 | `daily_limits` | per-site page cap per Hong Kong calendar day |
 | `location` | target region |
-| `score_threshold` / `realtime_threshold` | 60 = digest threshold, 80 = instant push (Pro) |
+| `score_threshold` / `realtime_threshold` | 60 = digest threshold, 80 = push-on-sight threshold |
 | `max_job_age_days` / `report_max_age_days` | 2 = only scrape postings from the last 2 days; 3 = for sources that **cannot** be re-checked (LinkedIn), never push anything that has sat unpushed for 3 days |
 | `liveness_check` | open the job page before pushing to confirm it is still open (Indeed / JobsDB). While on, re-checkable sources are no longer cut by age — only a 30-day hard ceiling applies |
 | `report_time` | daily digest time (HK) |
+| `resume_path` | Path to your resume (`.docx` / `.txt` / `.md`). Leave it empty to skip resume-vs-JD analysis — everything else works the same |
 
 The `background` section of `data/profiles/profile.yaml` drives LLM scoring — **you must
 replace the placeholders with your own** skills, experience, and target roles. If that
@@ -651,54 +671,36 @@ description and scores become far less meaningful.
 - **Student-visa aware** — `career_stage: student` (the default) keeps
   internship/part-time only; switch to `graduate` / `both` only after you hold IANG.
 
-### Free vs Pro
+### Star history
 
-Everything needed to run a complete job radar is in this repository — no server
-involved, and nothing leaves your machine.
+<a href="https://star-history.com/#prui0474/hk-job-radar&Date">
+  <img src="https://api.star-history.com/svg?repos=prui0474/hk-job-radar&type=Date"
+       alt="Star History" width="620">
+</a>
 
-| | Free | Pro |
-| --- | --- | --- |
-| Job boards | all of them | all of them |
-| Keywords | up to **7** | unlimited |
-| Push channels | **1** — WeCom / WxPusher / Email / Telegram, your pick | all at once |
-| Daily digest | **1 per day** (scheduled or manual) | custom schedule, several per day |
-| Instant push for ≥80 | — | yes |
-| Profiles (search directions) | 1 | several in parallel |
-| Setup wizard & self-check | included | included |
-| Graphical job workspace | — | yes |
-| Trend dashboard · application tracker | — | yes |
-| Resume-vs-JD gap analysis · interview prep | — | yes |
-| Polished HTML report · Excel / PDF export | — | yes |
+If this project is useful to you, a star — or a coffee if you feel like it — is the most
+direct way to say so.
 
-**What each row means**
+### Supporting the project
 
-- **Job boards** — the same three boards in both versions. Nothing is held back here.
-- **Keywords** — the job titles the pipeline searches for. Free stops at 7 (regular +
-  graduate keywords combined). Pro has no cap, so you can cover adjacent titles,
-  abbreviations, and the Chinese / English variants of the same role.
-- **Push channels** — free picks one; Pro sends to all four — whichever is convenient
-  for you.
-- **Daily digest** — free sends one per day; Pro lets you set the rhythm yourself:
-  morning and evening, or only when something new actually landed.
-- **Instant push for ≥80** — free users see it in the next digest; Pro gets it within
-  seconds. Hong Kong postings are often decided first-come.
-- **Profiles** — a profile is *who you are* (skills, experience, target roles), and it is
-  what the LLM scores against. Free runs one direction; Pro runs several side by side,
-  each with its own keywords and threshold, without overwriting the others.
-- **Setup wizard & self-check** — identical in both versions; never limited.
-- **Graphical job workspace** — free reads the backlog one message at a time; Pro opens
-  a local page where the whole backlog is in front of you.
-- **Trend dashboard · application tracker** — records how far each application got, and
-  shows volume and response rate over time, so you can see which direction is working.
-- **Resume-vs-JD gap analysis · interview prep** — compares one specific JD against your
-  resume, names the skills it asks for and yours doesn't show, and rehearses the questions
-  that JD invites.
-- **Polished HTML report · Excel / PDF export** — turns a week or a month into a report
-  you can hand to a mentor, send to a friend, or keep for yourself.
+If it got you an interview, or just saved you an evening, you can buy me a coffee. Thank
+you so much for the support — and may you land the well-paid offer you are after!
 
-**The free build makes sure you miss nothing; Pro is about getting the offer.**
+<details>
+<summary>☕ Buy me a coffee (click to show the QR codes)</summary>
 
-Here's to a high-paying offer you actually want — and to it landing soon.
+<p align="center">
+  <img src="docs/donate/wechat.png" width="148" alt="WeChat Pay">
+  <img src="docs/donate/wechat-hk.png" width="148" alt="WeChat Pay HK">
+  <img src="docs/donate/alipay.png" width="148" alt="Alipay">
+  <img src="docs/donate/alipay-hk.png" width="148" alt="AlipayHK">
+</p>
+
+<p align="center">
+  <sub>WeChat Pay · WeChat Pay HK · Alipay · AlipayHK</sub>
+</p>
+
+</details>
 
 ### Project structure
 
@@ -711,6 +713,7 @@ hk_job_radar/
 ├── run_once.bat  / run_once.command  # single sweep, then exit
 ├── login_jobsdb.bat / login_linkedin.bat / login_indeed.bat   # one-time verification / login
 ├── report_now.bat / notify_test.bat  # resend digest / test your push channel
+├── board.bat     / board.command     # local job board: see the backlog, track progress
 ├── MAC-打不开就读我.txt              # macOS: what to do if they won't open
 ├── scripts/
 │   ├── common.sh                  # shared shell helpers for the .command scripts
@@ -719,14 +722,21 @@ hk_job_radar/
 ├── config.example.yaml            # config template (copy → config.yaml)
 ├── data/profiles/profile.example.yaml  # profile template (copy → profile.yaml)
 ├── src/hk_job_radar/
-│   ├── scrapers/                  # jobsdb / linkedin / indeed adapters
+│   ├── scrapers/                  # jobsdb / linkedin / indeed / workday adapters
 │   ├── scoring/                   # keyword filter + LLM scorer
-│   ├── copilot/                   # semi-auto apply (form filler + QA)
+│   ├── copilot/                   # application co-pilot (JobsDB wizard + form filler)
 │   ├── notify/                    # 4 push channels: base / dispatch / wecom / wxpusher / email / telegram
+│   ├── guard.py                   # strips hidden text and prompt-injection from job ads
+│   ├── liveness.py                # re-checks whether a posting is still open
 │   ├── doctor.py                  # 15-item self-check (double-click doctor.bat / .command)
 │   ├── setup_wizard.py            # in-browser setup (double-click setup.bat / .command)
 │   ├── setup_ui.html              # the setup page itself (single file, no external assets)
-│   ├── tier.py                    # free-tier caps in one place (see Free vs Pro)
+│   ├── channels.py                # the four push channels, one place
+│   ├── workbench.py / workbench_ui.html   # local job board (server + single-file UI)
+│   ├── dedup.py                   # cross-site duplicate detection
+│   ├── applied_sync.py            # read applied jobs back from JobsDB
+│   ├── export.py                  # HTML / Excel / PDF export
+│   ├── resume.py / matcher.py     # resume parsing + resume-vs-JD comparison
 │   ├── pipeline.py / scheduler.py
 │   └── config.py / db.py / models.py
 ├── docs/                          # beginner guides (Windows + macOS)

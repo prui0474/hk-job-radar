@@ -146,7 +146,9 @@ if ! "$VENV_PY" -m playwright --version >/dev/null 2>&1; then
     radar_warn "当前版本的浏览器工具无法在你的系统上运行（常见于 macOS 13.5 以下）"
     echo "      正在自动改用兼容版本，这个不用你操作，稍等就好..."
     PW_PINNED=""
-    for pin in 1.45.0 1.44.0 1.43.1; do
+    # 降级链：从新往旧试。最后那个是 1.43.0 而不是 1.43.1——
+    # playwright 的 Python 包没有 1.43.1（PyPI 上 404），写了等于少一级退路。
+    for pin in 1.45.0 1.44.0 1.43.0; do
         echo "      尝试 playwright==$pin ..."
         if "$VENV_PY" -m pip install --disable-pip-version-check -q \
                 "playwright==$pin" >/dev/null 2>&1 \

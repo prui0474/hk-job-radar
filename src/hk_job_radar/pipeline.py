@@ -19,7 +19,6 @@ from typing import Any
 import yaml
 from loguru import logger
 
-from hk_job_radar import tier
 from hk_job_radar.config import AppConfig, PROFILE_PATH
 from hk_job_radar.db import Database
 from hk_job_radar.models import HK_TZ, JobPosting, now_hk
@@ -260,14 +259,16 @@ class Pipeline:
     # 高分即时推送
     # ------------------------------------------------------------------
     def check_high_score_push(self, job: JobPosting) -> None:
-        """高分岗位即时推送并标记已报（防止日报再推一遍）。
-
-        ⚠️ 这是【高级版功能】：免费版不含实时秒推（tier.realtime_push_enabled()
-        为 False 时直接返回）。功能并未缺失——这些岗位照样会出现在每日日报里，
-        只是晚一点到，这正是「免费版能用、高级版更省事」的分层点之一。
-        """
-        if not tier.realtime_push_enabled():
-            logger.debug(f"免费版不含实时秒推，{job.job_uid} 并入日报：{job.llm_score} 分")
+        """高分岗位即时推送并标记已报（防止日报再推一遍）。"""
+        # 同一个岗位常同时挂在几个站上，十分钟内先后被抓到很常见。
+        # 已经推过其中一条就不再推第二条——实时推送是「马上看」的场景，
+        # 重复即噪音。（日报不同：那一批你都能看见，只做「另见 #N」标注。）
+        duplicate = self.db.find_pushed_duplicate(job)
+        if duplicate is not None:
+            logger.info(
+                f"实时推送跳过：{job.title}（{job.source}）与已推送的 "
+                f"{duplicate.source} 那条是同一岗位")
+            self.db.mark_reported([job.job_uid])
             return
         logger.info(f"高分岗位即时推送：{job.job_uid}（{job.llm_score} 分）")
         self.notifier.send_realtime(job)

@@ -31,7 +31,6 @@ from urllib.parse import urlsplit
 
 from loguru import logger
 
-from hk_job_radar import tier
 from hk_job_radar.config import (
     BROWSER_DIR,
     CAREER_STAGE_JOB_TYPES,
@@ -549,12 +548,6 @@ def _check_keywords(cfg: Optional[AppConfig]) -> Check:
             "  - \"business analyst\"")
     total = len(cfg.keywords) + len(cfg.graduate_keywords)
     sample = "、".join(cfg.keywords[:3]) + ("…" if len(cfg.keywords) > 3 else "")
-    if tier.is_premium():
-        return Check("配置", "关键词", OK, f"{total} 个：{sample}")
-    if cfg.tier_notes:      # 被免费版额度裁过，说明用户填超了
-        return Check("配置", "关键词", WARN, f"填了 {total} 个，实际生效 7 个",
-                     "免费版最多 7 个（含毕业生项目关键词）。"
-                     "把不需要的删掉，留下最想找的几个。")
     return Check("配置", "关键词", OK, f"{total} 个：{sample}")
 
 

@@ -35,3 +35,7 @@ requests>=2.31            # Telegram Bot API 直调 + 通用 HTTP
 PyYAML>=6.0               # 解析 config.yaml 与个人资料 profile.yaml
 loguru>=0.7.2             # 日志（一行配置滚动文件，比 stdlib logging 模板代码少）
 tenacity>=8.2             # 重试与指数退避（装饰器式，比手写 retry 循环可靠）
+
+# ---- 导出 Excel 用（可选）----
+openpyxl>=3.1            # 报告导出 Excel（.xlsx）。缺了它不影响抓取/日报，
+                         # 只是 `run.py export` 会少导一个 Excel，并提示你装它。

@@ -24,11 +24,6 @@
   .wrap{max-width:840px; margin:0 auto}
   header h1{margin:0 0 6px; font-size:21px; letter-spacing:.2px}
   header p{margin:0; color:var(--muted); font-size:13.5px}
-  .pill{
-    display:inline-block; margin-left:8px; padding:1px 9px; border-radius:20px;
-    background:var(--accent-soft); color:var(--accent); font-size:12px;
-    vertical-align:2px;
-  }
   main{max-width:840px; margin:0 auto; padding:22px 20px 0}
   section{
     background:var(--card); border:1px solid var(--line); border-radius:12px;
@@ -165,7 +160,7 @@
 
 <header>
   <div class="wrap">
-    <h1>香港岗位雷达 · 配置向导<span class="pill" id="tierPill">免费版</span></h1>
+    <h1>香港岗位雷达 · 配置向导</h1>
     <p>四项填完，点最下面的「保存配置」。不需要手改 YAML，也不会改错缩进。</p>
   </div>
 </header>
@@ -438,6 +433,21 @@
         拿不准就先点上面的「先做一次体检」，看第 5 项「网络出口」怎么说。
       </p>
     </div>
+
+    <div style="border-top:1px solid var(--line); margin-top:18px; padding-top:16px">
+      <label class="field" for="resume_path">简历文件（可选）</label>
+      <p class="hint" style="margin:0 0 8px">
+        填上它，工作台每张岗位卡片右上角会多一个「分析」：拿这份简历逐项对照
+        岗位要求，列出你已经对上的、还缺的，以及可能会被问到的问题。
+        <b>留空＝不用这个功能</b>，其它一切照常。
+      </p>
+      <input type="text" id="resume_path" spellcheck="false"
+             placeholder="C:/Users/你的用户名/Desktop/简历/CV.docx">
+      <p class="hint">
+        支持 .docx / .txt / .md。PDF 请先用 Word 另存为 .docx —— PDF 里的字
+        是按位置画的，读不出连续的文本。程序只读这个文件，不会改动它。
+      </p>
+    </div>
   </section>
 </main>
 
@@ -494,10 +504,9 @@
   function refreshCounters() {
     var n = lines($("keywords").value).length +
             lines($("graduate_keywords").value).length;
-    var max = state.free_max_keywords || 7;
     var box = $("kwCounter");
-    box.innerHTML = "已填 <b>" + n + "</b> / " + max + " 个";
-    box.className = "counter" + (n > max ? " over" : "");
+    box.innerHTML = "已填 <b>" + n + "</b> 个";
+    box.className = "counter";
 
     var chars = $("profile_background").value.trim().length;
     $("bgCounter").innerHTML = "已填 <b>" + chars + "</b> 字";
@@ -596,6 +605,7 @@
       score_threshold: $("score_threshold").value,
       realtime_threshold: $("realtime_threshold").value,
       browser_proxy: proxyValue(),
+      resume_path: $("resume_path").value.trim(),
       profile_background: $("profile_background").value,
       api_key: $("api_key").value
     };
@@ -703,6 +713,7 @@
     $("src_workday").checked = !!(s.sources || {}).workday;
     setChannel(s.channel || "");
     setProxy(s.browser_proxy || "");
+    $("resume_path").value = s.resume_path || "";
 
     $("email_smtp_host").value = s.email_smtp_host || "smtp.qq.com";
     $("email_smtp_port").value = s.email_smtp_port || 465;
@@ -723,7 +734,6 @@
     if (s.has_api_key) {
       $("api_key").placeholder = "已配置，留空表示不修改";
     }
-    if (s.is_premium) { $("tierPill").textContent = "高级版"; }
 
     if (s.load_error) {
       show('<div class="box warn"><h3>读现有配置时遇到问题</h3>' +
