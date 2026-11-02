@@ -29,7 +29,7 @@ from hk_job_radar.scrapers.base import (
     LimitReachedError,
     NeedsManualVerifyError,
 )
-from hk_job_radar.scrapers.job_types import build_jobsdb_worktype
+from hk_job_radar.scrapers.job_types import build_jobsdb_worktype, extract_site_job_type
 
 # ---------------------------------------------------------------------------
 # 站点常量：改版修补只动这里
@@ -208,6 +208,10 @@ class JobsDBScraper(BaseScraper):
             return (loc.first.inner_text() or "").strip() if loc.count() else ""
 
         raw_posted = _text(SELECTORS["posted"])
+        # 卡片上印的类型标签（"Part time" 等）是站点自己的标注，比从标题猜可靠。
+        # 读整张卡的文字再逐行比对——不能对标题做子串匹配，那会把
+        # "Part-time Data Analyst" 这种岗位名当成站点标签。
+        site_type = extract_site_job_type(card.inner_text())
         return JobPosting(
             source=self.source_name,
             external_id=self.make_external_id(url, title),
@@ -219,6 +223,7 @@ class JobsDBScraper(BaseScraper):
             location=_text(SELECTORS["location"]) or "Hong Kong",
             posted_at=self._extract_posted_at(raw_posted),
             description_snippet=self.snippet(_text(SELECTORS["snippet"])),
+            job_type=site_type,
             keyword_matched=keyword,      # 记录是哪个搜索词把它带出来的
             direct_apply=self.detect_direct_apply(url),
         )

@@ -64,6 +64,7 @@ from loguru import logger
 from hk_job_radar.config import DATA_DIR
 from hk_job_radar.models import HK_TZ, JobPosting, now_hk
 from hk_job_radar.scrapers.base import BaseScraper, LimitReachedError
+from hk_job_radar.scrapers.job_types import extract_site_job_type
 
 #: 用户自己的雇主清单（个人数据，不进 git）。不存在时用下面内置的三家。
 EMPLOYERS_FILE = DATA_DIR / "workday_employers.yaml"
@@ -500,6 +501,9 @@ class WorkdayScraper(BaseScraper):
             location=location or "Hong Kong",
             posted_at=posted_at,
             description_snippet=self.snippet(strip_html(detail.get("jobDescription") or "")),
+            # Workday 的 CXS 接口在 jobPostingInfo 里直接给 timeType
+            # （"Full time" / "Part time" / "Contract"），这是最可信的类型来源。
+            job_type=extract_site_job_type(detail.get("timeType") or ""),
             keyword_matched="",       # 关键词由本地初筛统一判定
             direct_apply=True,        # 就是雇主官网，天然是直投
             # 接口已明确说「还能申请」——允许它跳过「岗位新鲜度」那道年龄闸门。

@@ -133,6 +133,11 @@ CAREER_STAGE_JOB_TYPES: dict[str, list[str]] = {
 _FULLTIME_ALIASES = {"full time", "full-time", "fulltime", "permanent"}
 _PARTTIME_ALIASES = {"part time", "part-time", "parttime"}
 _INTERNSHIP_ALIASES = {"internship", "intern", "co-op", "coop"}
+# 合同制 / 临时岗：JobsDB 统一标 "Contract/Temp"（worktype 244），LinkedIn 分 C / T。
+# 两者的共同点是「有明确结束日」，因此都不违背学生签证的在读身份。
+# 注意 casual 不在此列——它对应 JobsDB 的 245 桶（散工/暑期工），语义与合同制不同，
+# 用户没明确要求时不自动放行。
+_CONTRACT_ALIASES = {"contract", "contracts", "temporary", "temp", "fixed term", "fixed-term"}
 
 # 「毕业生项目」关键词的识别词（管培生 / 毕业生培训计划等）。
 # 这类词无论放在 keywords 还是 graduate_keywords 里，都一律用【全职】类型去搜——
@@ -244,6 +249,38 @@ class AppConfig:
     # 只对 Indeed / JobsDB 生效——LinkedIn 协议禁止机器人，本程序不点它的详情页。
     # 关掉它只省时间，不影响其它功能。
     liveness_check: bool = True
+    # ---- 岗位类型判定策略 ----
+    #: "lenient"（默认）：判定不出类型时**放行**，交给 LLM 打分。
+    #:   这是原有行为（宁可多看，不可漏看），老配置与开源用户不受任何影响。
+    #: "strict"：判定不出类型时视为「不可确认」，按 unknown_job_type_action 处置。
+    #:   适合「身份不允许投错」的人——例如持学生签证、在读期间做全职即违法，
+    #:   此时漏掉一个岗位只是少一次机会，投错一个岗位是违规。
+    job_type_policy: str = "lenient"
+    #: 类型不可确认时的处置（仅 job_type_policy="strict" 时生效）：
+    #:   "daily_only"（默认）不进实时推送，但仍进日报（日报里单独标「类型待确认」）。
+    #:   "drop" 初筛阶段直接丢弃，连日报都不进。
+    #: 之所以默认 daily_only 而不是 drop：站点的类型标注本身就不可靠（JobsDB 的
+    #: worktype 是「包含」语义、Indeed/LinkedIn 新版列表页连摘要都不给），
+    #: 一刀切丢弃会把「站点没写但确实是实习」的岗位一起杀死。
+    unknown_job_type_action: str = "daily_only"
+    #: 额外排除的岗位类型（在 allowed_job_type_classes() 之外再挡一层）。
+    #: 为什么需要它：allowed_job_type_classes() 出于兼容始终放行 "" 和
+    #: "graduate programme"，但个人可能明确不想看某一类——例如已经不想投管培生，
+    #: 却仍会因为 "data analyst" 这类词漏进 "Graduate Trainee (Data)"。
+    #: 可填的分类名：internship / part time / full time / graduate programme。
+    #: 默认空 = 不额外排除，行为与之前完全一致。
+    exclude_job_type_classes: list[str] = field(default_factory=list)
+    #: 标题方向词直通（2026-10-25 新增）。
+    #: 解决什么问题：关键词初筛只认「标题/摘要含关键词」，但招聘站上的真实标题
+    #: 写法千差万别——`AI R&D Engineering Intern` 不含 `ai engineer`、
+    #: `Investment Risk Management Intern` 不含任何关键词，于是被当噪音丢掉。
+    #: 实测 205 个真实岗位里只放行 3.9%，被丢的包括 `Applied LLM Engineer`、
+    #: `intern - FICC/Research` 这类对口岗。
+    #: 填入方向词后，**标题**出现其中任一词即放行进 LLM 打分，由 LLM 判断相关性。
+    #: ★ 只认标题、不认摘要：JD 正文里 "data-driven" / "AI-powered" 遍地都是，
+    #:   一旦放开摘要等于取消初筛。
+    #: ★ 默认空 = 行为与之前完全一致（开源用户不受任何影响）。
+    title_direction_hints: list[str] = field(default_factory=list)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
     feedback_poll_seconds: int = 60
     report_time: str = "09:00"
@@ -312,6 +349,11 @@ class AppConfig:
         - "graduate programme"：始终放行（毕业后入职，任何阶段都合法且有价值）；
         - 其余按 job_types 逐个映射：写了 internship 才放行实习，写了 full time
           才放行全职。这正是 career_stage 三种模式生效的地方。
+
+        「合同制」为什么要单独一支：classify_posting 会原样返回站点标签
+        （JobsDB 的卡片写着 "Contract/Temp" → 归一化为 "contract"）。
+        若这里只认 internship/part time/full time，用户把 contract 写进
+        job_types 后，抓回来的合同岗会在安全网这一步被全部剔除——等于白抓。
         """
         allowed: set[str] = {"", "graduate programme"}
         for jt in self.job_types:
@@ -322,6 +364,9 @@ class AppConfig:
                 allowed.add("part time")
             elif j in _FULLTIME_ALIASES:
                 allowed.add("full time")
+            elif j in _CONTRACT_ALIASES:
+                # 站点标签只有 "contract" 与 "temporary" 两种写法，都放行
+                allowed.update({"contract", "temporary"})
         return allowed
 
     def keywords_per_cycle_for_source(self, source: str) -> int:
@@ -490,6 +535,11 @@ def load_config(path: Path | None = None, *, require_runnable: bool = True) -> A
     cfg.graduate_keywords = [str(k).strip().lower() for k in
                              raw.get("graduate_keywords", cfg.graduate_keywords)
                              if str(k).strip()]
+    # 方向词直通：不做任何校验，写错最多是不生效（不会让程序起不来）。
+    cfg.title_direction_hints = [
+        str(h).strip().lower() for h in (raw.get("title_direction_hints") or [])
+        if str(h).strip()
+    ]
     rotation_raw = raw.get("keyword_rotation")
     if isinstance(rotation_raw, dict):
         if rotation_raw.get("per_cycle") is not None:
@@ -531,6 +581,14 @@ def load_config(path: Path | None = None, *, require_runnable: bool = True) -> A
     cfg.max_job_age_days = int(raw.get("max_job_age_days", cfg.max_job_age_days))
     cfg.report_max_age_days = int(raw.get("report_max_age_days", cfg.report_max_age_days))
     cfg.liveness_check = bool(raw.get("liveness_check", cfg.liveness_check))
+    cfg.job_type_policy = str(raw.get("job_type_policy", cfg.job_type_policy)).strip().lower()
+    cfg.unknown_job_type_action = str(
+        raw.get("unknown_job_type_action", cfg.unknown_job_type_action)
+    ).strip().lower()
+    cfg.exclude_job_type_classes = [
+        str(t).strip().lower() for t in (raw.get("exclude_job_type_classes") or [])
+        if str(t).strip()
+    ]
 
     cfg.notify = _parse_notify(raw)
     cfg.feedback_poll_seconds = int(raw.get("feedback_poll_seconds", cfg.feedback_poll_seconds))
@@ -550,7 +608,8 @@ def _validate(cfg: AppConfig, *, require_runnable: bool = True) -> None:
     if require_runnable and not cfg.keywords:
         raise ConfigError(
             "keywords 还是空的：请打开 config.yaml，在 keywords: 下面填上你想找的岗位名称"
-            "（英文小写，一行一个，如 \"data analyst\"）。模板刻意不预置默认词——"
+            "（中英文都行、大小写不敏感，一行一个，如 \"data analyst\" 或 \"數據分析員\"；"
+            "中文繁简各写一份）。模板刻意不预置默认词——"
             "「你想找什么」只有你自己知道，照抄别人的词只会抓错岗位。"
             "填法见 config.example.yaml 里的「填词四条规则」。")
     if require_runnable and not cfg.job_types:
@@ -594,6 +653,14 @@ def _validate(cfg: AppConfig, *, require_runnable: bool = True) -> None:
             "report_max_age_days 必须 >= 1（不能复核的站点如 LinkedIn 的推送时效线，单位天）。")
     if cfg.realtime_threshold < cfg.score_threshold:
         raise ConfigError("realtime_threshold 应 >= score_threshold（实时推送的岗位必然进日报）。")
+    # 岗位类型策略：写错就静默退化成 lenient，等于白配，所以启动即报错
+    if cfg.job_type_policy not in ("lenient", "strict"):
+        raise ConfigError(
+            f"job_type_policy 只能是 lenient 或 strict（当前：{cfg.job_type_policy}）。")
+    if cfg.unknown_job_type_action not in ("daily_only", "drop"):
+        raise ConfigError(
+            "unknown_job_type_action 只能是 daily_only 或 drop"
+            f"（当前：{cfg.unknown_job_type_action}）。")
     # 推送通道名合法性：写错名字会让"配了却收不到"变成无声故障，不如启动即报错
     from hk_job_radar import channels   # 延迟导入避免循环依赖
     unknown = [c for c in (cfg.notify.channels or []) if c not in channels.VALID_CHANNELS]

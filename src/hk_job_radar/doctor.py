@@ -542,10 +542,11 @@ def _check_keywords(cfg: Optional[AppConfig]) -> Check:
         return Check(
             "配置", "关键词", FAIL, "还没有填",
             "打开 config.yaml，找到 keywords: 那一行，把 [] 换成你自己的岗位名称，"
-            "一行一个、用英文双引号包起来，例如：\n"
+            "一行一个、用英文双引号包起来，中英文都行（中文繁简各写一份），例如：\n"
             "keywords:\n"
             "  - \"data analyst\"\n"
-            "  - \"business analyst\"")
+            "  - \"business analyst\"\n"
+            "  - \"數據分析員\"")
     total = len(cfg.keywords) + len(cfg.graduate_keywords)
     sample = "、".join(cfg.keywords[:3]) + ("…" if len(cfg.keywords) > 3 else "")
     return Check("配置", "关键词", OK, f"{total} 个：{sample}")

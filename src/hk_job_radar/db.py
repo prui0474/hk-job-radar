@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     location            TEXT DEFAULT '',
     posted_at           TEXT,
     description_snippet TEXT DEFAULT '',
+    job_type            TEXT DEFAULT '',
     keyword_matched     TEXT DEFAULT '',
     llm_score           INTEGER,
     llm_reason          TEXT DEFAULT '',
@@ -216,6 +217,10 @@ class Database:
         # 跨站重复指纹。老库补列后所有行都是空串，由
         # backfill_dedupe_keys() 一次性算好；算不出来的写 NO_KEY 哨兵值。
         ("dedupe_key", "TEXT DEFAULT ''"),
+        # 岗位类型判定结果（internship / part time / full time / graduate programme，
+        # 空串=不可确认）。老库补列后全是空串，等于「全部不可确认」——
+        # 想要历史数据也有值，跑 `hk_radar backfill-job-type`（见 cli.py）。
+        ("job_type", "TEXT DEFAULT ''"),
     )
 
     def _ensure_columns(self) -> None:
@@ -292,15 +297,15 @@ class Database:
                 self.conn.execute(
                     """INSERT INTO jobs (job_uid, source, external_id, title, company,
                            url, url_normalized, salary_text, location, posted_at,
-                           description_snippet, keyword_matched, llm_score, llm_reason,
+                           description_snippet, job_type, keyword_matched, llm_score, llm_reason,
                            direct_apply, status, first_seen_at, reported, eligibility_note,
                            dedupe_key)
-                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,?,?)""",
                     (
                         job.job_uid, job.source, job.external_id, job.title, job.company,
                         job.url, job.url_normalized, job.salary_text, job.location,
                         to_iso(job.posted_at) if job.posted_at else None,
-                        job.description_snippet, job.keyword_matched,
+                        job.description_snippet, job.job_type, job.keyword_matched,
                         job.llm_score, job.llm_reason,
                         1 if job.direct_apply else 0, job.status, to_iso(job.first_seen_at),
                         job.eligibility_note, job.dedupe_key,
@@ -932,6 +937,8 @@ class Database:
             location=row["location"] or "",
             posted_at=parse_iso(row["posted_at"]) if row["posted_at"] else None,
             description_snippet=row["description_snippet"] or "",
+            # 防御：补列失败的老库取不到这一列，按「不可确认」处理
+            job_type=(row["job_type"] or "") if "job_type" in row.keys() else "",
             keyword_matched=row["keyword_matched"] or "",
             llm_score=row["llm_score"],
             llm_reason=row["llm_reason"] or "",

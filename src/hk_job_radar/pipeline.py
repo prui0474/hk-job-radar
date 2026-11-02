@@ -248,12 +248,40 @@ class Pipeline:
 
         # ≥80 分不等日报，发现即推（P1-1 前置，U5 默认开启）
         realtime_pushed = 0
+        deferred = 0
         for job in scored_jobs:
-            if job.llm_score is not None and job.llm_score >= self.config.realtime_threshold:
-                self.check_high_score_push(job)
-                realtime_pushed += 1
+            if job.llm_score is None or job.llm_score < self.config.realtime_threshold:
+                continue
+            # 折中策略：类型不可确认的岗位不打扰手机，留到日报里自己看。
+            if self._defer_unknown_type(job):
+                deferred += 1
+                logger.info(f"实时推送暂缓（类型不可确认）：{job.title}（{job.job_uid}）")
+                continue
+            self.check_high_score_push(job)
+            realtime_pushed += 1
         stat["realtime_pushed"] = realtime_pushed
+        if deferred:
+            stat["realtime_deferred"] = deferred
         return stat
+
+    def _defer_unknown_type(self, job: JobPosting) -> bool:
+        """类型不可确认的岗位是否该缓一缓（不推实时推送，只进日报）。
+
+        只有「strict + daily_only」这一种组合会返回 True：
+          - lenient：判定不出类型时本来就该交给 LLM，不该拦；
+          - drop：这类岗位在初筛阶段就已经被丢了，根本走不到这里。
+
+        ★ job.job_type 为空时现场重算一次，而不是直接当成「不可确认」：
+          正常流程里初筛已经写回过这个字段，但老库读出来的记录、
+          以及手工构造的对象可能没有它——把「字段没填」误当成
+          「判不出类型」，会把明明是实习的岗位压进日报，属于静默漏推。
+        """
+        if self.config.job_type_policy != "strict":
+            return False
+        if self.config.unknown_job_type_action != "daily_only":
+            return False
+        kind = (job.job_type or "").strip() or KeywordFilter.classify_posting(job)
+        return not kind
 
     # ------------------------------------------------------------------
     # 高分即时推送
@@ -363,6 +391,21 @@ class Pipeline:
         closed_uids = {j.job_uid for j in result.closed}
         return [j for j in jobs if j.job_uid not in closed_uids]
 
+    def _mark_unconfirmed_types(self, jobs: list[JobPosting]) -> None:
+        """给日报里的岗位打「类型待确认」标记（只在 strict 策略下打）。
+
+        为什么在日报这一侧单独算而不是入库时存：这是**显示逻辑**，
+        取决于当前配置。同一条岗位在 lenient 下不该被标记，在 strict 下才标；
+        存进数据库就会随配置来回改而失真。
+        """
+        if self.config.job_type_policy != "strict":
+            return
+        for job in jobs:
+            # 与 _defer_unknown_type 同理：字段为空时现场重算，别把「没填」当成「判不出」
+            kind = (job.job_type or "").strip() or KeywordFilter.classify_posting(job)
+            if not kind:
+                job.type_unconfirmed = True
+
     def run_daily_report(self, force: bool = False) -> bool:
         """汇总推送日报：取未报岗位 → 排版分页 → 发送 → 标记已报。
 
@@ -382,6 +425,9 @@ class Pipeline:
                 # 后面一旦有岗位就可以补发（否则今天这份日报就彻底没了）。
                 logger.info("日报：当前没有待推送的新岗位。")
                 return False
+            # 类型不可确认的岗位在日报里要标出来（strict 策略下它们不会出现在
+            # 实时推送里，这里是用户唯一能看见它们的地方）。
+            self._mark_unconfirmed_types(jobs)
             results = self.notifier.send_report(jobs, self.config.show_unscored)
             if not results:
                 logger.error("日报：没有可用的推送通道，未发送（请检查 config.yaml 的 notify 段）。")

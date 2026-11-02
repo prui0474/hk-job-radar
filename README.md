@@ -129,13 +129,8 @@ flowchart LR
 - 🧩 配置驱动，可复用到任何求职目标
 - 🔓 **不需要服务器，数据不出本机**——整套东西都在你自己电脑上跑
 
-### 实际效果
-
-真实录屏（本地库里 394 条岗位）：筛出 80 分以上 → 展开岗位描述 → 标记已投 → 撤销。
-
-<p align="center">
-  <img src="docs/img/demo.gif" width="880" alt="岗位工作台操作演示">
-</p>
+> **上面这些功能具体在哪里点、每一步怎么操作，全在[保姆级新手教程 · 第 8 步](docs/getting-started-zh.md#第-8-步打开岗位工作台四个功能都在这里约-5-分钟)** 里。
+> 这里只讲它们能干什么，不重复贴操作步骤。
 
 ### 局限
 
@@ -146,6 +141,8 @@ flowchart LR
 - 不保证 100% 覆盖——它是「雷达」，不是「全量抓取」
 - **关键词要靠你自己想**——它只会按你写的词去找，写得太窄就会漏。
   好消息是没有数量限制，把同义词、缩写、中英文写法都铺上去就行。
+  只写英文会漏掉纯中文标题的岗位（中文繁简要各写一份），
+  怎么填见[教程 · 附 A2](docs/getting-started-zh.md#a2-把岗位关键词换成你自己的必须做)。
 
 ### 网络要求
 
@@ -288,8 +285,8 @@ python run.py apply <job_uid>     # 投递副驾（半自动填表）
 | 配置项 | 作用 |
 | --- | --- |
 | `sources` | 开启哪几个招聘站 |
-| `keywords` | 你要找的岗位名称，数量不限 |
-| `graduate_keywords` | 毕业后的全职岗位（管理培训生等）；与上面合计不超过 7 个 |
+| `keywords` | 你要找的岗位名称，数量不限。中英文都行，中文繁简各写一份 |
+| `graduate_keywords` | 毕业后的全职岗位（管理培训生等）；数量同样不限 |
 | `career_stage` | `student` = 只抓实习/兼职 · `graduate` = 全职 · `both` = 两者 |
 | `job_types` | 高级覆盖项；正常由 `career_stage` 自动推导，一般不用手填 |
 | `notify.channels` | 用哪个推送通道——四个完全平等，写在第一位的就是生效的那个 |
@@ -468,14 +465,8 @@ flowchart LR
 - 🧩 **Config-driven** — keywords, location, career stage, profile, thresholds all in YAML.
 - 🔓 **No server involved, nothing leaves your machine.**
 
-### See it in action
-
-Recorded from the real board (394 jobs in the local database): filter to 80+ → expand a job
-description → mark it applied → undo.
-
-<p align="center">
-  <img src="docs/img/demo.gif" width="880" alt="Job board demo">
-</p>
+> **Where each of these lives and the exact clicks:** [beginner's guide · step 8](docs/getting-started-zh.md#第-8-步打开岗位工作台四个功能都在这里约-5-分钟) (Chinese) walks through the board, the trend charts, the export buttons, resume comparison
+> and the application co-pilot, one click at a time.
 
 ### Limitations
 
@@ -488,7 +479,8 @@ description → mark it applied → undo.
 - **Not 100% coverage** — it's a radar, not a guarantee of every posting.
 - **Keywords are on you** — it only looks for what you write, so a narrow list means
   missed roles. There is no cap, so pile on synonyms, abbreviations and the Chinese /
-  English variants of the same title.
+  English variants of the same title. English-only misses Chinese-titled roles; write
+  Traditional and Simplified separately. How to fill it in: [guide · A2](docs/getting-started-zh.md#a2-把岗位关键词换成你自己的必须做) (Chinese).
 
 ### Network requirements
 
@@ -638,7 +630,7 @@ Everything is in `config.yaml` (see `config.example.yaml` for commented defaults
 | Key | What it does |
 | --- | --- |
 | `sources` | which boards to enable |
-| `keywords` | your target job titles, no limit on how many |
+| `keywords` | your target job titles, no limit on how many. English and Chinese both work; write Chinese in both Traditional and Simplified |
 | `graduate_keywords` | post-graduation full-time roles (management trainee, …) |
 | `career_stage` | `student` = internship/part-time · `graduate` = full-time · `both` |
 | `job_types` | advanced override; normally derived from `career_stage` |

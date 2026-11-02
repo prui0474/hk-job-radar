@@ -80,6 +80,10 @@ def build_job_card(job: JobPosting, index: int | None = None) -> str:
         " · ".join(x for x in (job.company, job.location, job.salary_text) if x),
         _age_line(job),
         _eligibility_line(job),
+        # 类型不可确认：strict 策略下这类岗位不推实时推送，只在日报里出现，
+        # 所以必须提示一句——点开之前就该知道「是不是实习没人保证」。
+        ("❓ 类型待确认：站点没标实习/兼职，点开先看 Employment Type"
+         if job.type_unconfirmed else ""),
         # 跨站重复：同一个岗位挂在两个站，两条都在列表里，标出「另见」让用户
         # 自己挑 JD 更全的那条。序号是全局的，跨页也指得准。
         job.duplicate_note,
@@ -212,6 +216,14 @@ def build_html_card(job: JobPosting) -> str:
     age = _age_line(job)
     if age:
         rows.append(f'<div style="font-size:12px;color:#888780;margin:0 0 6px 0;">{_esc(age)}</div>')
+    if job.type_unconfirmed:
+        # 与文本卡片同一件事：这类岗位不会进实时推送，只在这里出现，
+        # 所以点开之前必须先说明「是不是实习没人保证」。
+        rows.append(
+            f'<div style="font-size:12px;color:#8A6D00;background:#FFF8E1;'
+            f'border-radius:6px;padding:6px 10px;margin:0 0 6px 0;">'
+            f'<b style="font-weight:600;">类型待确认</b>：站点没标实习/兼职，'
+            f'点开先看 Employment Type</div>')
     note = (job.eligibility_note or "").strip()
     if note:
         # 硬性身份门槛用红、可争取的条件用黄——同样只提示，不替用户做决定

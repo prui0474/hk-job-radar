@@ -128,3 +128,75 @@ def build_jobsdb_worktype(job_types: list[str]) -> str:
             if code not in codes:
                 codes.append(code)
     return quote(",".join(codes), safe="") if codes else ""
+
+
+# ---------------------------------------------------------------------------
+# 反向：从「卡片上印的类型标签」读回岗位类型。
+#
+# 为什么需要：URL 过滤只能表达「我要搜索什么」，不能证明「抓回来的这条就是」。
+# 三个站点都不把类型放进结构化字段，但 JobsDB 的卡片会把 "Part time" 单独
+# 印在标题下方——那是站点自己的标注，比我们从标题里猜可靠得多。
+#
+# ★ 必须逐行比对，不能对整段文字做子串匹配：标题里本身就可能写着
+#   "Part-time Data Analyst"，那是岗位名字的一部分，不是站点的类型标签。
+# ---------------------------------------------------------------------------
+_SITE_TYPE_LABELS: dict[str, str] = {
+    "internship": "internship",
+    "intern": "internship",
+    "part time": "part time",
+    "part-time": "part time",
+    "parttime": "part time",
+    "full time": "full time",
+    "full-time": "full time",
+    "fulltime": "full time",
+    "permanent": "full time",     # 香港语境 permanent 通常=全职长工
+    "contract/temp": "contract",
+    "contract": "contract",
+    "temporary": "temporary",
+    "casual": "casual",
+    "casual/vacation": "casual",
+}
+
+#: 同一张卡片可能同时印多个类型（如 "Part time" + "Contract/Temp"）。
+#: 按这个顺序取第一个——实习/兼职优先，因为它们是「合法可投」的那一侧。
+_SITE_TYPE_PRIORITY: tuple[str, ...] = (
+    "internship", "part time", "full time", "contract", "temporary", "casual",
+)
+
+
+#: JobsDB 把类型印成一句话：「This is a Full time job」/「This is a Contract/Temp job」，
+#: 而不是独立的「Full time」。只剥离这一个固定句式，**绝不做子串匹配**——
+#: 标题里的 "Part-time Data Analyst" 是岗位名字的一部分，不是站点标注。
+_TYPE_SENTENCE_PREFIX = "this is a "
+_TYPE_SENTENCE_SUFFIX = " job"
+
+
+def extract_site_job_type(text: str) -> str:
+    """从岗位卡片全文里提取站点标注的岗位类型。
+
+    返回 'internship' | 'part time' | 'full time' | 'contract' | 'temporary'
+    | 'casual' | ''（卡片上没有任何类型标签）。
+
+    ★ 必须**逐行**比对，不能对整段文字做子串匹配：标题本身就可能写着
+      "Part-time Data Analyst"，那是岗位名字的一部分，不是站点标签。
+    ★ JobsDB 的类型印在「This is a X job」这句话里（实测 2026-10 页面）——
+      不剥离这个句式的话，JobsDB 的站点标签**永远提取为空**，整个类型判定
+      会退化成「靠标题猜」。这里只认这一个固定前后缀，其余原样逐行比对。
+
+    ★ 返回 'contract' / 'temporary' / 'casual' 时由调用方决定是否放行
+      （见 AppConfig.allowed_job_type_classes），本函数不做合规判断。
+    """
+    found: set[str] = set()
+    for line in (text or "").splitlines():
+        key = " ".join(line.strip().lower().split())   # 归一空白，去首尾
+        mapped = _SITE_TYPE_LABELS.get(key)
+        if mapped is None and key.startswith(_TYPE_SENTENCE_PREFIX) \
+                and key.endswith(_TYPE_SENTENCE_SUFFIX):
+            inner = key[len(_TYPE_SENTENCE_PREFIX):-len(_TYPE_SENTENCE_SUFFIX)]
+            mapped = _SITE_TYPE_LABELS.get(inner.strip())
+        if mapped:
+            found.add(mapped)
+    for kind in _SITE_TYPE_PRIORITY:
+        if kind in found:
+            return kind
+    return ""

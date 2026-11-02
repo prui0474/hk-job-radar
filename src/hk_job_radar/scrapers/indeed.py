@@ -24,7 +24,7 @@ from loguru import logger
 
 from hk_job_radar.models import HK_TZ, JobPosting, now_hk
 from hk_job_radar.scrapers.base import BaseScraper, LimitReachedError
-from hk_job_radar.scrapers.job_types import build_indeed_sc
+from hk_job_radar.scrapers.job_types import build_indeed_sc, extract_site_job_type
 
 BASE_URL = "https://hk.indeed.com"
 
@@ -196,6 +196,9 @@ class IndeedScraper(BaseScraper):
         if not title:
             return None
 
+        # 卡片若印了类型标签（部分版式会），读下来当证据；新版 mosaic 卡片
+        # 常常不印，此时为空，由 keyword_filter 从标题/正文推断。
+        site_type = extract_site_job_type(card.inner_text())
         return JobPosting(
             source=self.source_name,
             # 优先用 jk 作为岗位 ID（如 indeed:ca36a9d5367ac6f9，人可读），
@@ -209,6 +212,7 @@ class IndeedScraper(BaseScraper):
             location=_text(SELECTORS["location"]) or "Hong Kong",
             posted_at=self._extract_posted_at(_text(SELECTORS["posted"])),
             description_snippet=self.snippet(_text(SELECTORS["snippet"])),
+            job_type=site_type,
             keyword_matched=keyword,
             direct_apply=self.detect_direct_apply(url),
         )

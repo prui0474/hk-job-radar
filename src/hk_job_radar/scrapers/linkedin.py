@@ -27,7 +27,7 @@ from loguru import logger
 from hk_job_radar.config import DATA_DIR
 from hk_job_radar.models import HK_TZ, JobPosting, now_hk
 from hk_job_radar.scrapers.base import BaseScraper, LimitReachedError
-from hk_job_radar.scrapers.job_types import build_linkedin_f_jt
+from hk_job_radar.scrapers.job_types import build_linkedin_f_jt, extract_site_job_type
 
 BASE_URL = "https://www.linkedin.com"
 
@@ -284,6 +284,9 @@ class LinkedInScraper(BaseScraper):
             posted_at = self._extract_posted_at((time_el.inner_text() or "").strip()) or \
                         self._extract_posted_at((time_el.get_attribute("datetime") or "").strip())
 
+        # LinkedIn 新版列表卡片设计上不显示摘要，也常常不显示类型；
+        # 旧版会把 "Full-time" 印在地点那一行里。能读到就读，读不到留给推断。
+        site_type = extract_site_job_type(card.inner_text())
         return JobPosting(
             source=self.source_name,
             external_id=self.make_external_id(url, title),
@@ -295,6 +298,7 @@ class LinkedInScraper(BaseScraper):
             location=_text(SELECTORS["location"]) or "Hong Kong",
             posted_at=posted_at,
             description_snippet=self.snippet(_text(SELECTORS["snippet"])),
+            job_type=site_type,
             keyword_matched=keyword,
             direct_apply=self.detect_direct_apply(url),
         )

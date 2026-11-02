@@ -196,7 +196,9 @@ def _clean_lines(text: Any, split_pattern: str = r"[\r\n]+") -> list[str]:
     """把「多行文本 / 列表」统一成去空行、去首尾空格、小写、保序去重的列表。
 
     关键词统一小写是刻意的：库里存的是小写，配置里大小写混写会导致
-    「同一个词被当成两个词」这种难查的问题。前端也会提示「用英文小写」。
+    「同一个词被当成两个词」这种难查的问题。前端提示的是「大小写不敏感」。
+    ★ 小写只作用于 ASCII：`.lower()` 不动中文，所以繁简两种写法不会互相
+      匹配，用户必须繁简各写一份（提示文案里已明确说明）。
 
     split_pattern 默认只按换行切（关键词一行一个）；WxPusher 的 UID 允许
     逗号分隔（页面提示里就是这么写的），所以那一处会改成按逗号或换行切。
@@ -360,7 +362,7 @@ def validate_form(form: WizardForm) -> tuple[list[dict[str, str]], list[dict[str
         errors.append({
             "field": "keywords",
             "message": "关键词还是空的。至少填 1 个你想找的岗位名称，"
-                       "比如 data analyst、business analyst。",
+                       "中英文都行（如 data analyst、數據分析員；中文繁简各写一份）。",
         })
 
     if not any(form.sources.values()):

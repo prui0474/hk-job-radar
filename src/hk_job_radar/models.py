@@ -53,6 +53,11 @@ class JobPosting:
     location: str = ""               # 如 "中环" / "Hong Kong"
     posted_at: datetime | None = None    # 发布时间；解析失败为 None
     description_snippet: str = ""    # 摘要前 500 字符（喂给 LLM 的素材）
+    # 岗位类型：internship / part time / full time / graduate programme。
+    # 空字符串 = 不可确认（站点没标注、标题和正文也看不出来）。
+    # 值有两个来源，可信度从高到低：① 抓取时读到的站点类型标签；
+    # ② 由标题/正文推断（见 KeywordFilter.classify_posting）。
+    job_type: str = ""
     keyword_matched: str = ""        # 初筛命中的关键词（证据，便于排查误杀）
     llm_score: int | None = None     # None = 未打分（LLM 失败降级，照常进日报）
     llm_reason: str = ""             # LLM 给出的一句话匹配理由
@@ -74,6 +79,9 @@ class JobPosting:
     dedupe_key: str = ""
     # 显示用：本条与日报里第几号是同一岗位。不入库——序号每次日报都变。
     duplicate_note: str = ""
+    # 显示用：类型不可确认（只在 job_type_policy=strict 时由 pipeline 置位）。
+    # 不入库——它由每次运行时按当前配置现算，存进库反而会随配置变更失真。
+    type_unconfirmed: bool = False
 
     @property
     def job_uid(self) -> str:
