@@ -67,6 +67,51 @@ class BrowserManager:
         self._playwright = None
         self._contexts: dict[str, object] = {}   # source_key → BrowserContext
         self._pages: dict[str, object] = {}      # source_key → Page（每站一页复用）
+        self._ua_cache: Optional[str] = None     # 见 resolve_headless_user_agent
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def strip_headless_marker(ua: str) -> str:
+        """把 UA 里的 `HeadlessChrome/157.0.0.0` 换成 `Chrome/157.0.0.0`。
+
+        只动这一个词，版本号、平台、引擎全部原样保留——它说的仍然是这台
+        浏览器的真实身份，只是不再主动声明「我是无头模式」。
+
+        为什么要动它（2026-11 实测）：同一台机器、同一份启动参数，
+        UA 里带 HeadlessChrome 时 JobsDB 的 Cloudflare 挑战 45 秒不放行、
+        0 张岗位卡片；只把这两个词换掉，3.6 秒出 30 张卡片。
+        """
+        return (ua or "").replace("HeadlessChrome", "Chrome")
+
+    def resolve_headless_user_agent(self) -> Optional[str]:
+        """取「去掉无头标记」的 UA；取不到返回 None（调用方就不传 UA）。
+
+        做法是临时起一个无头实例读 `navigator.userAgent` 再关掉 ——
+        这样版本号一定和当前内核一致，不会写死成未来会过期的字符串。
+        一次进程只算一次（结果缓存），代价约 0.5 秒。
+        """
+        if self._ua_cache is not None:
+            return self._ua_cache or None
+        if self._playwright is None:
+            return None
+        probe = None
+        try:
+            probe = self._playwright.chromium.launch(headless=True)
+            page = probe.new_page()
+            ua = page.evaluate("() => navigator.userAgent") or ""
+            self._ua_cache = self.strip_headless_marker(str(ua))
+        except Exception as exc:
+            # 取不到就退回原样启动：能抓的站照样能抓，别为一项可选优化
+            # 把整轮抓取弄崩。
+            logger.debug(f"读取无头 UA 失败（本次不覆盖 UA）：{exc}")
+            self._ua_cache = ""
+        finally:
+            if probe is not None:
+                try:
+                    probe.close()
+                except Exception:
+                    pass
+        return self._ua_cache or None
 
     # ------------------------------------------------------------------
     def launch(self, source_key: str, force_headless: Optional[bool] = None,
@@ -128,6 +173,15 @@ class BrowserManager:
         if self.config.browser_proxy.strip() and self.config.browser_proxy.strip().lower() != "system":
             logger.info(f"浏览器代理：{self.config.browser_proxy.strip()}")
 
+        # 可选：无头模式下隐去 UA 里的无头标记（见 strip_headless_marker）。
+        # 只在无头时才有意义 —— 有头模式的 UA 本来就不带这个词。
+        launch_extra: dict[str, object] = {}
+        if headless and self.config.browser_hide_headless:
+            ua = self.resolve_headless_user_agent()
+            if ua:
+                launch_extra["user_agent"] = ua
+                logger.debug(f"UA 已隐去无头标记：{ua}")
+
         context = self._playwright.chromium.launch_persistent_context(
             user_data_dir=str(user_data_dir),
             headless=headless,
@@ -135,6 +189,7 @@ class BrowserManager:
             viewport={"width": 1366, "height": 900},
             locale="zh-HK",
             args=chromium_args,
+            **launch_extra,
         )
         page = context.new_page()
         self._contexts[source_key] = context

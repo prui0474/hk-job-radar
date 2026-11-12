@@ -227,6 +227,13 @@ class AppConfig:
                                  "workday": 120}
     )
     browser_headless: bool = False
+    #: 无头模式下是否隐去 UA 里的 "HeadlessChrome" 字样（默认关闭）。
+    #: 2026-11 实测：JobsDB 的 Cloudflare 会放行普通 Chrome，但会拦下 UA 里
+    #: 写着 HeadlessChrome 的会话，等待 45 秒也不放行。开了这一项，无头浏览器
+    #: 不再自报无头，其余请求头、页面内容、浏览器版本一律不动。
+    #: 默认关闭是刻意的：改请求头与 README「不绕过 Cloudflare」的对外说法
+    #: 有张力，要不要开由使用者自己判断。
+    browser_hide_headless: bool = False
     cloudflare_wait_seconds: int = 45
     #: 浏览器代理策略，三种取值：
     #:   ""          强制直连（默认，保持既有行为不变）
@@ -563,6 +570,7 @@ def load_config(path: Path | None = None, *, require_runnable: bool = True) -> A
 
     br = raw.get("browser") or {}
     cfg.browser_headless = bool(br.get("headless", cfg.browser_headless))
+    cfg.browser_hide_headless = bool(br.get("hide_headless", cfg.browser_hide_headless))
     cfg.cloudflare_wait_seconds = int(br.get("cloudflare_wait_seconds", cfg.cloudflare_wait_seconds))
     cfg.browser_proxy = str(br.get("proxy", cfg.browser_proxy) or "").strip()
 
