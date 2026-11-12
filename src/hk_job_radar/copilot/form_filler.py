@@ -81,6 +81,13 @@ class FillResult:
 class FormFiller:
     """申请表单填充器。"""
 
+    #: 等表单出现的上限（毫秒）。正常申请页 1–3 秒就出控件。
+    FORM_WAIT_MS = 15000
+    #: 「表单已渲染」的判据：页面上出现任意一个可填控件
+    FORM_READY_SELECTOR = "input, select, textarea"
+    #: 真正要遍历的控件：只到可见的那些，隐藏控件填了也没用
+    VISIBLE_CONTROL_SELECTOR = "input:visible, select:visible, textarea:visible"
+
     def __init__(self, config, browser, profile_store, qa_engine) -> None:
         self.config = config
         self.browser = browser
@@ -98,6 +105,29 @@ class FormFiller:
         return "other"
 
     # ------------------------------------------------------------------
+    def _wait_for_apply_form(self, page) -> int:
+        """等申请表单渲染出来，返回可见控件数；等不到返回 0，**不抛异常**。
+
+        ★ 这里原来写的是 `page.wait_for_load_state("networkidle", timeout=30000)`。
+        申请页和搜索结果页一样，广告位、埋点、验证码组件常驻，网络永远不会
+        进入「500 毫秒内无连接」的状态，所以那一行必然等满 30 秒再抛
+        Timeout 30000ms exceeded。抓取路径已经因为同一个原因删掉了这行
+        （见 scrapers/jobsdb.py 的 _wait_for_listing），投递副驾这里漏改。
+
+        等不到控件不等于页面不能用：`_fill_standard_fields` 本来就会按
+        实际可见控件数量决定做什么，一把都找不到时它自然什么也不填。
+        """
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        try:
+            page.wait_for_selector(self.FORM_READY_SELECTOR, timeout=self.FORM_WAIT_MS)
+        except PlaywrightTimeoutError:
+            logger.debug(f"[副驾] 等申请表单超时（{self.FORM_WAIT_MS} ms），"
+                         f"按空表单继续（url={getattr(page, 'url', '?')}）")
+            return 0
+        return page.locator(self.VISIBLE_CONTROL_SELECTOR).count()
+
+    # ------------------------------------------------------------------
     def fill(self, job: JobPosting) -> FillResult:
         """打开申请页 → 填充 → 返回结果（不提交）。"""
         page = self.browser.launch("apply", force_headless=False)  # 必须看得见
@@ -106,7 +136,8 @@ class FormFiller:
         logger.info(f"[副驾] 打开申请页：{job.url}（平台：{result.platform}）")
         page.goto(job.url, wait_until="domcontentloaded", timeout=60000)
         self.browser.wait_cloudflare(page)
-        page.wait_for_load_state("networkidle", timeout=30000)
+        # 等表单控件出现（不再等 networkidle，原因见 _wait_for_apply_form）
+        self._wait_for_apply_form(page)
         self.browser.human_delay(3, 6)
 
         self._fill_standard_fields(page, result)
@@ -117,9 +148,7 @@ class FormFiller:
     # ------------------------------------------------------------------
     def _fill_standard_fields(self, page, result: FillResult) -> None:
         """遍历可见控件，按语义规则填充。"""
-        controls = page.locator(
-            "input:visible, select:visible, textarea:visible"
-        ).all()
+        controls = page.locator(self.VISIBLE_CONTROL_SELECTOR).all()
         logger.debug(f"[副驾] 页面上可见控件 {len(controls)} 个")
 
         for idx, ctrl in enumerate(controls):

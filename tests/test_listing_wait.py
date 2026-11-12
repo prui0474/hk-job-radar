@@ -23,6 +23,7 @@ from __future__ import annotations
 import sys
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
@@ -30,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError  # noqa: E402
 
 from hk_job_radar.config import AppConfig                        # noqa: E402
+from hk_job_radar.copilot.form_filler import FormFiller          # noqa: E402
 from hk_job_radar.scrapers import jobsdb as jobsdb_module        # noqa: E402
 from hk_job_radar.scrapers.jobsdb import SELECTORS, JobsDBScraper  # noqa: E402
 
@@ -255,6 +257,70 @@ def test_cards_present_does_not_emit_the_warning():
     scraper, _ = _scraper(page)
     scraper._parse_listing = lambda p, kw: []   # type: ignore[method-assign]
     assert _warning_text(scraper) == ""
+
+
+# ---------------------------------------------------------------------------
+# 五、投递副驾的申请页：同一处写法，同一个坑
+# ---------------------------------------------------------------------------
+class _FakeApplyPage:
+    url = "https://hk.jobsdb.com/job/95074242/apply"
+    cloudflare_ok = True
+
+    def __init__(self, controls: int = 0, *, times_out: bool = False) -> None:
+        self.controls = controls
+        self.times_out = times_out
+        self.selector_waits: list[tuple[str, int | None]] = []
+
+    def goto(self, url, **kwargs):            # noqa: ARG002
+        pass
+
+    def wait_for_load_state(self, state, timeout=None):  # noqa: ARG002
+        if state == "networkidle":
+            raise AssertionError("申请页也不该再等 networkidle")
+        raise AssertionError(f"意外的等待状态：{state}")
+
+    def wait_for_selector(self, selector, timeout=None, state=None):  # noqa: ARG002
+        self.selector_waits.append((selector, timeout))
+        if self.times_out:
+            raise PlaywrightTimeoutError(f"Timeout {timeout}ms exceeded.")
+
+    def locator(self, selector):              # noqa: ARG002
+        return _FakeLocator(self.controls)
+
+
+def _filler(page: _FakeApplyPage):
+    filler = FormFiller.__new__(FormFiller)   # 跳过 __init__：这里只测等待
+    filler.browser = _FakeBrowser(page)
+    return filler
+
+
+def test_apply_page_returns_control_count():
+    page = _FakeApplyPage(controls=9)
+    filler = _filler(page)
+    assert filler._wait_for_apply_form(page) == 9
+    assert page.selector_waits == [(filler.FORM_READY_SELECTOR, filler.FORM_WAIT_MS)]
+
+
+def test_apply_page_timeout_returns_zero_without_raising():
+    page = _FakeApplyPage(times_out=True)
+    filler = _filler(page)
+    assert filler._wait_for_apply_form(page) == 0
+
+
+def test_fill_does_not_wait_for_networkidle_and_still_fills():
+    """★ 走完整条 fill()：假页面在 networkidle 上会 AssertionError。"""
+    page = _FakeApplyPage(controls=5)
+    filler = _filler(page)
+    calls: list[str] = []
+    filler._wait_for_apply_form = lambda p: calls.append("wait") or 5
+    filler._fill_standard_fields = lambda p, r: calls.append("fill")
+    filler._upload_resume = lambda p, j, r: None
+    filler._screenshot = lambda p: ""
+
+    job = SimpleNamespace(url="https://hk.jobsdb.com/job/95074242/apply")
+    result = filler.fill(job)
+    assert calls == ["wait", "fill"]
+    assert result.platform == "jobsdb"
 
 
 if __name__ == "__main__":
