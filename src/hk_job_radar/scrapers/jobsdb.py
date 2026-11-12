@@ -22,6 +22,7 @@ from typing import Optional
 from urllib.parse import quote_plus
 
 from loguru import logger
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from hk_job_radar.models import HK_TZ, JobPosting
 from hk_job_radar.scrapers.base import (
@@ -97,6 +98,38 @@ class JobsDBScraper(BaseScraper):
     source_name = "jobsdb"
     pages_per_keyword = MAX_PAGES_PER_KEYWORD
 
+    #: 等岗位卡片渲染出来的上限（毫秒）。正常列表页 1–3 秒就出卡片。
+    #: 超过这个数还没出，基本可以确定这个关键词没有结果，再等只是白烧时间。
+    CARD_WAIT_MS = 15000
+
+    # ------------------------------------------------------------------
+    def _wait_for_listing(self, page, keyword: str, page_no: int) -> int:
+        """等岗位卡片出现，返回卡片数。等不到就按空页处理，**不抛异常**。
+
+        ★ 为什么不用 wait_for_load_state("networkidle")：
+        networkidle 的定义是「500 毫秒内没有任何网络连接」。招聘站的广告位、
+        埋点上报、长轮询请求是常驻的，页面可能永远不进入空闲状态。
+        2026-11 有用户和本项目都实测到：这一行在 JobsDB 上 30 秒必超时，
+        而同一时刻岗位卡片其实早就渲染好了。
+
+        更糟的是它抛的是普通 TimeoutError，会被 tenacity 当成「整轮抓取失败」
+        去重试三轮，用户看到的日志是「jobsdb 一直抓不到岗位」加一句
+        Timeout 30000ms exceeded，完全看不出真正原因是「等了一个不该等的信号」。
+
+        卡片才是我们要的东西，所以直接等卡片。
+        """
+        try:
+            page.wait_for_selector(SELECTORS["job_card"], timeout=self.CARD_WAIT_MS)
+        except PlaywrightTimeoutError:
+            # 两种可能：这个关键词确实没结果，或者页面没渲染出来。
+            # 都不该让整轮失败——返回 0，交给 _parse_listing 走空页分支，
+            # 后面的「有没有下一页」判断会自然结束这个关键词。
+            logger.debug(f"[jobsdb] 等卡片超时（{keyword} 第 {page_no} 页，"
+                         f"{self.CARD_WAIT_MS} ms），按空页处理"
+                         f"（url={getattr(page, 'url', '?')}）")
+            return 0
+        return page.locator(SELECTORS["job_card"]).count()
+
     # ------------------------------------------------------------------
     def _do_fetch(self, last_seen_cutoff: datetime) -> list[JobPosting]:
         """逐关键词搜索 → 逐页解析 → 汇总 JobPosting 列表。"""
@@ -104,6 +137,8 @@ class JobsDBScraper(BaseScraper):
         all_jobs: list[JobPosting] = []
         seen_urls: set[str] = set()   # 本轮内先去一次重，减少无谓的入库尝试
         limit_hit = False             # 当日配额在途中用尽：保留已抓结果后收手
+        pages_tried = 0               # 本轮打开了几页（用于诊断「一页都没等到卡片」）
+        pages_without_cards = 0
 
         for keyword in self.active_keywords():
             # 岗位类型 → JobsDB/SEEK worktype 数字码（按关键词动态生成）：
@@ -143,7 +178,10 @@ class JobsDBScraper(BaseScraper):
                 # 每轮又等满 45 秒，用户白等三分钟才看到那句提示。
                 if not self.browser.wait_cloudflare(page, quiet=True):
                     raise NeedsManualVerifyError(self.source_name)
-                page.wait_for_load_state("networkidle", timeout=30000)
+                # 等岗位卡片渲染出来（不用 networkidle，原因见 _wait_for_listing）
+                pages_tried += 1
+                if self._wait_for_listing(page, keyword, page_no) == 0:
+                    pages_without_cards += 1
                 # 每次导航之间的随机延迟：防封号核心手段
                 self.browser.human_delay()
 
@@ -166,6 +204,15 @@ class JobsDBScraper(BaseScraper):
                 break
 
         logger.info(f"[jobsdb] 本轮共解析到 {len(all_jobs)} 个岗位")
+        if not all_jobs and pages_tried and pages_without_cards == pages_tried:
+            # 一页卡片都没等到 —— 说完「0 个岗位」就结束的话，用户没法判断
+            # 是「今天真的没有新岗位」还是「这台机器其实抓不到」，只能来问。
+            logger.warning(
+                f"[jobsdb] {pages_tried} 页都没有等到岗位卡片，可能有两种原因：\n"
+                f"    ① 这些关键词今天确实没有结果；\n"
+                f"    ② 页面没渲染出来（多半是没登录 / 没过人机验证）。\n"
+                f"    下一步：双击项目文件夹里的 login_jobsdb.bat，"
+                f"在弹出的浏览器里点一下验证，看到正常的搜索结果页再关掉。")
         return all_jobs
 
     # ------------------------------------------------------------------
