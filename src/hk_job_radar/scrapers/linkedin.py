@@ -10,9 +10,11 @@ LinkedIn 是四个平台中风控最严的一个（协议 8.2 明文禁止 bots�
 4. 强烈建议用求职专用小号登录（主号人脉资产不应暴露在自动化活动中）。
 
 登录态策略：
-- 已登录（persistent context 里有 Cookie）→ 正常解析；
-- 未登录 → 记录 WARNING 并以访客模式尽力解析（访客也能看到部分岗位），
-  绝不自动提交任何登录表单（合规红线：不接受把账号密码交给脚本）。
+- 不依赖登录。2026-11 LinkedIn 把搜索页换成新版前端后，登录后台那套 DOM 里
+  根本没有可解析的岗位卡片，所以改走公开访客列表接口（见 GUEST_SEARCH_URL），
+  未登录也能抓到带链接的岗位；
+- 若配了 `data/linkedin_session.json`，仍会顺手注入 cookie，让请求更像真实访客；
+- 绝不自动提交任何登录表单（合规红线：不接受把账号密码交给脚本）。
 """
 from __future__ import annotations
 
@@ -65,42 +67,47 @@ def load_session() -> list[dict]:
                         "domain": ".linkedin.com", "path": "/"})
     return cookies
 
-# 搜索 URL：f_TPR=r86400 = 最近 24 小时；sortBy=DD = 按发布时间倒序（最新在最前）
-# {jt} 由 build_linkedin_f_jt 动态生成（如 &f_JT=I%2CP，实习+兼职），
-# 从 config.job_types 映射而来——学生签证在读期间只抓实习/兼职，绝不抓全职。
-SEARCH_URL = (BASE_URL + "/jobs/search"
-              "?keywords={kw}&location={loc}&f_TPR=r86400&sortBy=DD&start={start}{jt}")
+# 搜索入口：LinkedIn 的公开访客列表接口（返回一段 HTML，不是整页 SPA）。
+#
+# 为什么不用 /jobs/search（2026-11-12 实测）：那个地址已经被改版成
+# React Server Components 前端，会 302 到 /jobs/search-results，class 全是
+# i87l55 这类原子化哈希名，卡片上没有 a[href*="/jobs/view/"] 链接，
+# 旧的 `div.job-card-container` / `li.jobs-search-results__list-item` 等三代
+# 选择器全部 0 命中，连 `time` 元素都没有。结果是页面能打开、岗位文本也在，
+# 但解析出 0 条，而且不报错，看起来和「今天没有新岗位」一模一样。
+#
+# 这个访客接口只回列表片段，一页 10 条，结构还是老的 base-card 那套：
+#   li > a.base-card__full-link + h3.base-search-card__title
+# 实测 start=0/10/20 三页各 10 条、互不重复，岗位链接里带数字 ID。
+#
+# 它同样是「只读列表页」：不登录、不点击、不打开详情，与原来的克制原则一致，
+# 工作量反而更小（不用等 SPA 渲染）。
+#
+# {jt} 由 build_linkedin_f_jt 动态生成（如 &f_JT=I%2CP，实习+兼职）。
+GUEST_SEARCH_URL = ("https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+                    "?keywords={kw}&location={loc}&f_TPR=r86400&start={start}{jt}")
 
-# 每页 25 条是 LinkedIn 的默认值；本适配器最多翻 2 页（克制原则）
+#: 访客接口每页固定 10 条（不是登录版的 25 条）
+PAGE_SIZE = 10
+
+#: 每个关键词最多翻几页（克制原则：翻页越多风险越大）
 MAX_PAGES = 2
-PAGE_SIZE = 25
 
 # 选择器集中在此：LinkedIn DOM 变化频繁，改版时只需改这几行。
 #
-# 注意（2026-10 实测）：登录后 LinkedIn 会切到「新版 UI」，岗位卡片用的是
-# div.job-card-container 一套 class（job-card-list__* / artdeco-entity-lockup__*），
-# 与访客模式（li.jobs-search-results__list-item / div.base-card / h3.base-search-card__title）
-# 完全不同。这里两种都保留、用逗号并列，登录态有效时命中新版，会话失效退回
-# 访客时命中旧版，二者互不冲突（不同 UI 世代，class 不会重叠）。
+# 2026-11-12 更新：这里的每一行都对应访客接口返回的那段 HTML（见 GUEST_SEARCH_URL）。
+# 登录后台那套 div.job-card-container / job-card-list__* 已经随新版前端一起消失，
+# 留着只会让人误以为还有两条路可走。
 SELECTORS: dict[str, str] = {
-    # 登录后新版：div.job-card-container；访客旧版：li.jobs-search-results__list-item 等
-    "job_card": "div.job-card-container, li.jobs-search-results__list-item, "
-                "div.base-card, div.job-search-card",
-    "job_link": "a.job-card-list__title--link, a.base-card__full-link, "
-                "a.job-search-card__link",
-    # 标题就是 a.job-card-list__title--link（新版，href 形如 /jobs/view/4476277417/）
-    # 或 h3.base-search-card__title（旧版）。原来的 span.sr-only 是站内无障碍标签
-    # （如导航 logo 的 "LinkedIn"），会造成标题串位，已移除。
-    "title": "a.job-card-list__title--link, h3.base-search-card__title",
-    "company": "div.artdeco-entity-lockup__subtitle, "
-               "h4.base-search-card__subtitle a, a.job-search-card__subtitle-link, "
-               "h4.base-search-card__subtitle",
-    "location": "ul.job-card-container__metadata-wrapper li, span.job-search-card__location",
-    # 新版发布时间在卡片页脚 ul.job-card-list__footer-wrapper li（如「25 分钟前」），
-    # 旧版在 time[datetime]。.first 取第一个命中即可。
-    "posted": "ul.job-card-list__footer-wrapper li, time[datetime], "
-              "time.job-search-card__listdate, time",
-    "snippet": "p.job-search-card__snippet",
+    # 列表项：li 里含「/jobs/view/ 链接」的才算，避免把嵌套 li 或广告位算进来
+    "job_card": "li:has(a[href*='/jobs/view/'])",
+    "job_link": "a.base-card__full-link, a[href*='/jobs/view/']",
+    "title": "h3.base-search-card__title",
+    "company": "h4.base-search-card__subtitle",
+    "location": "span.job-search-card__location",
+    # 可见文案（「1 小時前」）与 datetime 属性（2026-11-12）都在 <time> 上
+    "posted": "time.job-search-card__listdate, time[datetime]",
+    "snippet": "p.job-search-card__snippet, div.job-search-card__snippet",
     "salary": "span.job-search-card__salaryinfo",
 }
 
@@ -135,11 +142,10 @@ class LinkedInScraper(BaseScraper):
     # ------------------------------------------------------------------
     def _do_fetch(self, last_seen_cutoff: datetime) -> list[JobPosting]:
         page = self.browser.launch(self.source_name)
-        # 重新注入登录凭证。注意：add_cookies() 在 persistent context 上
-        # **不会落盘**（实测：注入后重启浏览器即消失），所以必须每次启动重注入。
-        # 本文件只在使用 `import_linkedin_cookie.bat`（搬运正常浏览器 Cookie）时
-        # 才会生成；若你是用 login_linkedin.bat 在浏览器里手动登录的，登录态由
-        # profile 自己持久化（data/browser/linkedin/），此处注入的旧值不会生效。
+        # 重新注入登录凭证（可选）。访客接口本身不要求登录，但带着 cookie
+        # 请求更像一个真实访客，也避免被当成全新匿名流量。
+        # 注意：add_cookies() 在 persistent context 上**不会落盘**（实测：
+        # 注入后重启浏览器即消失），所以每次启动都要重注入一次。
         session_cookies = load_session()
         if session_cookies:
             self.browser.inject_cookies(self.source_name, session_cookies)
@@ -147,11 +153,8 @@ class LinkedInScraper(BaseScraper):
         seen: set[str] = set()
         loc = quote_plus(self.config.location or "Hong Kong")
         limit_hit = False             # 当日配额在途中用尽：保留已抓结果后收手
-        # 登录态检查必须等页面真正跳到 LinkedIn 之后再判断：
-        # launch() 刚返回的页面是 about:blank，URL 与正文都是空的，
-        # ensure_logged_in() 此时必然返回 False → 无论是否已登录都会误报
-        # 「未检测到登录态」。因此延迟到第一次 goto 之后再检查，且只检查一次。
-        login_checked = False
+        pages_tried = 0               # 诊断「一页都没解析到卡片」用
+        cards_seen = 0
 
         for keyword in self.active_keywords():
             # 岗位类型 → LinkedIn f_JT 参数（按关键词动态生成）：
@@ -159,8 +162,8 @@ class LinkedInScraper(BaseScraper):
             jt_value = build_linkedin_f_jt(self.config.job_types_for_keyword(keyword))
             jt_fragment = f"&f_JT={jt_value}" if jt_value else ""
             for page_no in range(MAX_PAGES):
-                url = SEARCH_URL.format(kw=quote_plus(keyword), loc=loc,
-                                        start=page_no * PAGE_SIZE, jt=jt_fragment)
+                url = GUEST_SEARCH_URL.format(kw=quote_plus(keyword), loc=loc,
+                                              start=page_no * PAGE_SIZE, jt=jt_fragment)
                 try:
                     self._count_page()
                 except LimitReachedError:
@@ -173,21 +176,17 @@ class LinkedInScraper(BaseScraper):
                 page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 # LinkedIn 偶发出现验证页：只等待，不破解
                 self.browser.wait_cloudflare(page)
-                # 先判断是否被重定向到登录/注册墙（访客被节流时会跳墙）。
-                # 放最前面做快速失败，避免对着空页面白等 15 秒再空耗配额。
+                # 访客接口偶尔会回一个登录/注册页（被节流时），先做快速失败，
+                # 避免对着空页面白等 15 秒再空耗配额。
                 if self._page_is_authwall(page):
                     logger.warning(
-                        "[linkedin] 页面被重定向到登录/注册墙：未登录状态下 LinkedIn 会节流访客。\n"
+                        "[linkedin] 访客列表接口被退回登录页：LinkedIn 对这台机器的"
+                        "匿名访问做了节流。\n"
                         "  下一步：双击 login_linkedin.bat（Mac 上是 login_linkedin.command），\n"
-                        "  用【求职专用小号】登录一次，登录态会保存下来自动复用。")
+                        "  用【求职专用小号】登录一次，登录态会被复用，本轮先跳过。")
                     break
-                # 页面已真正加载，此时判断登录态才有意义（只判断第一次）
-                if not login_checked:
-                    login_checked = True
-                    self._warn_if_not_logged_in(page)
-                # 关键：LinkedIn 页面存在长连接（实时推送等），networkidle 几乎
-                # 永不触发，直接等它会在 30s 后抛超时异常、拖垮整轮抓取。
-                # 改为"等岗位卡片出现"（有结果时），超时也放行交给解析判定。
+                # 等列表项出现；等不到也继续，交给解析按实际数量判定。
+                # （不用 networkidle：这个站的长连接永远不让网络空闲。）
                 try:
                     page.wait_for_selector(SELECTORS["job_card"], state="attached",
                                            timeout=15000)
@@ -196,6 +195,9 @@ class LinkedInScraper(BaseScraper):
 
                 self.browser.human_delay()
 
+                pages_tried += 1
+                cards = page.locator(SELECTORS["job_card"]).count()
+                cards_seen = max(cards_seen, cards)
                 jobs = self._parse_listing(page, keyword)
                 fresh = [j for j in jobs
                          if j.url_normalized not in seen
@@ -210,23 +212,17 @@ class LinkedInScraper(BaseScraper):
                 break
 
         logger.info(f"[linkedin] 本轮共解析到 {len(all_jobs)} 个岗位")
+        if not all_jobs and pages_tried and cards_seen == 0:
+            # 一页卡片都没等到就结束，只说「0 个岗位」等于什么都没说。
+            logger.warning(
+                f"[linkedin] {pages_tried} 页都没有解析到岗位卡片。两种可能：\n"
+                f"    ① 这些关键词今天确实没有符合条件的新岗位；\n"
+                f"    ② LinkedIn 又改了页面结构（本适配器换过一次入口，见 GUEST_SEARCH_URL 注释）。\n"
+                f"    下一步：先双击 login_linkedin.bat 登录一次再跑；仍然为 0 就把它当成改版，"
+                f"把这条日志发给开发者。")
         return all_jobs
 
     # ------------------------------------------------------------------
-    def _warn_if_not_logged_in(self, page) -> None:
-        """未登录时给出中文指引（不自动登录、不接受账号密码）。
-
-        必须在 page 已经 goto 到 LinkedIn 之后调用：刚 launch 出来的
-        页面是 about:blank，此时检查必然误判为「未登录」。
-        """
-        if self.browser.ensure_logged_in(page, r"linkedin\.com/jobs"):
-            return
-        logger.warning(
-            "[linkedin] 未检测到登录态，将以访客模式抓取（结果可能不完整）。\n"
-            "  建议：双击 login_linkedin.bat（Mac 上是 login_linkedin.command），\n"
-            "  用【求职专用小号】登录一次，登录态会保存下来自动复用。"
-        )
-
     @staticmethod
     def _page_is_authwall(page) -> bool:
         """判断当前页面是否被重定向到 LinkedIn 的登录/注册墙。
