@@ -264,6 +264,39 @@ def test_render_keeps_trailing_comment_on_source_line():
             "\n".join(_sources_section_lines(out))
 
 
+def test_verify_ignores_extra_source_keys():
+    """用户自己加的来源键不该阻断保存，四个已知开关仍要写对。
+
+    `_set_sources` 会原样保留段内的未知键；但校验如果拿整字典去比，多一个
+    `careersgov` 就判定不一致，保存被拒 —— 报错和 workday 那个 bug 一模一样，
+    用户会以为根本没修好。
+    """
+    with Sandbox() as box:
+        text = box.template.read_text(encoding="utf-8-sig")
+        text = text.replace("  indeed: true\n", "  indeed: true\n  careersgov: true\n")
+        box.write_config(text)
+        sources = {"jobsdb": True, "linkedin": False, "indeed": True, "workday": False}
+        form = w.form_from_payload(_payload(sources=sources))
+        out = w.render_config_text(form)
+        raw = yaml.safe_load(out)
+        assert {n: raw["sources"][n] for n in w.WIZARD_SOURCES} == sources
+        assert raw["sources"]["careersgov"] is True, raw["sources"]
+        assert w.verify_config_text(out, form) == []
+
+
+def test_verify_still_catches_wrong_source_value():
+    """反向用例：放宽额外键之后，已知开关写错仍必须被查出来。"""
+    with Sandbox() as box:
+        sources = {"jobsdb": True, "linkedin": False, "indeed": False, "workday": True}
+        form = w.form_from_payload(_payload(sources=sources))
+        out = w.render_config_text(form)
+        assert w.verify_config_text(out, form) == []
+        bad = re.sub(r"^  jobsdb: true$", "  jobsdb: false", out, count=1, flags=re.M)
+        assert bad != out
+        problems = w.verify_config_text(bad, form)
+        assert any("站点开关" in p for p in problems), problems
+
+
 def test_render_keeps_template_comments():
     """写回后的文件仍带着讲解注释 —— 用户以后手改时还看得懂。"""
     with Sandbox() as box:

@@ -961,7 +961,15 @@ def verify_config_text(text: str, form: WizardForm) -> list[str]:
     _check("关键词", raw.get("keywords") or [], form.keywords)
     _check("毕业生项目关键词", raw.get("graduate_keywords") or [], form.graduate_keywords)
     _check("求职阶段", str(raw.get("career_stage", "")), form.career_stage)
-    _check("站点开关", raw.get("sources") or {}, form.sources)
+    # 只比 WIZARD_SOURCES 这四个键。用户在 sources 段自己加的自定义来源
+    # （例如 `careersgov: true`）会被 `_set_sources` 原样保留，这是对的；
+    # 但整字典一比，多出来的键就让校验失败，保存被以「写入后不一致」中止，
+    # 用户看到的是和「workday 存不进去」一模一样的报错。四个已知键仍逐一
+    # 严格相等，只是它们之外的不再参与比较。
+    written_sources = raw.get("sources") or {}
+    _check("站点开关",
+           {n: bool(written_sources.get(n)) for n in WIZARD_SOURCES},
+           form.sources)
 
     notify = raw.get("notify") or {}
     _check("推送通道", notify.get("channels") or [], [form.channel])
