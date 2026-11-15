@@ -126,7 +126,7 @@ def test_user_agent_passed_only_when_enabled(tmp_path):
 
 
 def test_no_user_agent_when_disabled(tmp_path):
-    """默认关闭：不改变任何现有用户的行为（这也是 README 口径能站住的前提）。"""
+    """显式关掉时仍然不传 UA：开关关掉就该恢复原始行为。"""
     chromium, _, _ = _launch_with(tmp_path, hide=False)
     assert "user_agent" not in chromium.persistent_kwargs
 

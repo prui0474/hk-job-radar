@@ -116,9 +116,11 @@ class BaseScraper(ABC):
                 entry = f"login_{exc.source}.command"
             logger.error(
                 f"[{exc.source}] 这个站还没过过人机验证，本轮直接跳过（不重试）。\n"
-                f"    下一步：双击项目文件夹里的 {entry}\n"
-                f"    在弹出的浏览器里点一下验证；看到正常的搜索结果页面，就可以关掉它。\n"
-                f"    这一步只需要做一次，之后程序会记住（验证有效期内不用再来）。")
+                f"    如果你刚刚才用过 {entry} 并看到过正常的页面，那问题不在登录态：\n"
+                f"    抓取模式下的浏览器标识跟登录时不一样，Cloudflare 把它当成另一台机器。\n"
+                f"    把 config.yaml 里 browser 段的 hide_headless 改成 true 再跑一次。\n"
+                f"    如果还没用过 {entry}：双击项目文件夹里的它，在弹出的浏览器里点一下验证，\n"
+                f"    看到正常的搜索结果页面就可以关掉。这一步只需要做一次，验证有效期内不用再来。")
             if self.db:
                 self.db.log_event(exc.source, "needs_manual_verify", {"entry": entry})
             return []

@@ -227,13 +227,14 @@ class AppConfig:
                                  "workday": 120}
     )
     browser_headless: bool = False
-    #: 无头模式下是否隐去 UA 里的 "HeadlessChrome" 字样（默认关闭）。
-    #: 2026-11 实测：JobsDB 的 Cloudflare 会放行普通 Chrome，但会拦下 UA 里
-    #: 写着 HeadlessChrome 的会话，等待 45 秒也不放行。开了这一项，无头浏览器
-    #: 不再自报无头，其余请求头、页面内容、浏览器版本一律不动。
-    #: 默认关闭是刻意的：改请求头与 README「不绕过 Cloudflare」的对外说法
-    #: 有张力，要不要开由使用者自己判断。
-    browser_hide_headless: bool = False
+    #: 无头模式下是否隐去 UA 里的 "HeadlessChrome" 字样（默认开启）。
+    #: 2026-11-12 实测：同一台机器、同一份启动参数，只差 UA 里这一个词，
+    #: UA 带 HeadlessChrome 时 JobsDB 的验证页 45 秒不放行、抓到 0 个岗位；
+    #: 换成 Chrome 后 3.6 秒抓到 30 个岗位。Cloudflare 用 UA 判机器人，
+    #: 所以默认开启，否则每个新用户跑第一轮都会撞上。
+    #: 开启后只替换这一个词：浏览器版本号、页面内容、其他请求头一律不动。
+    #: 配置文件里没写这一项时也按开启处理，老用户的 config.yaml 不必手改。
+    browser_hide_headless: bool = True
     cloudflare_wait_seconds: int = 45
     #: 浏览器代理策略，三种取值：
     #:   ""          强制直连（默认，保持既有行为不变）

@@ -181,6 +181,12 @@ class BrowserManager:
             if ua:
                 launch_extra["user_agent"] = ua
                 logger.debug(f"UA 已隐去无头标记：{ua}")
+        elif headless:
+            # 无头又没隐去标记：Cloudflare 会认出来，站点静默地一个岗位都不给。
+            logger.warning(
+                "当前是无头模式，但没有隐去无头标记（hide_headless 为 false）。"
+                "JobsDB 和 Indeed 很可能被 Cloudflare 挡下，表现是跑完一轮 0 个岗位"
+                "却不报错。改法：把 config.yaml 里 browser 段的 hide_headless 改成 true。")
 
         context = self._playwright.chromium.launch_persistent_context(
             user_data_dir=str(user_data_dir),
