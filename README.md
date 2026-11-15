@@ -139,7 +139,7 @@ flowchart LR
 - 依赖第三方站点，抓取可能被限流或临时封锁。**LinkedIn 需要真实账号**并登录一次；
   JobsDB、Indeed 和企业官网不需要账号，只要过一次人机验证（企业官网连这一步都没有）
 - 被拦下的表现是「跑完了，但一个岗位都没有」，不报错。这时先看[教程 · 附 C](docs/getting-started-zh.md#附-c常见问题)；
-  `browser.hide_headless` 那一项默认关闭，打开通常就通了
+  如果还是 0 个，多半是出口 IP 被这个站标成了高风险，换一个网络再试
 - 不保证 100% 覆盖——它是「雷达」，不是「全量抓取」
 - **关键词要靠你自己想**——它只会按你写的词去找，写得太窄就会漏。
   好消息是没有数量限制，把同义词、缩写、中英文写法都铺上去就行。
@@ -295,7 +295,7 @@ python run.py apply <job_uid>     # 投递副驾（半自动填表）
 | `notify.wecom` / `wxpusher` / `email` / `telegram` | 各通道自己的凭据，只填你选中的那一个 |
 | `keyword_rotation` | 每轮搜几个关键词（按你每天开机多久来调） |
 | `daily_limits` | 单站每个香港自然日的页数上限 |
-| `hide_headless` | 无头时隐去 UA 里的「无头」标记。默认关闭；某个站跑完却是 0 个岗位时先试它 |
+| `hide_headless` | 无头时隐去 UA 里的「无头」标记。默认开启；关掉后 JobsDB、Indeed 基本抓不到 |
 | `location` | 目标地区，默认 Hong Kong |
 | `score_threshold` / `realtime_threshold` | 60 = 进日报的分数线；80 = 抓到就单独推的分数线 |
 | `max_job_age_days` / `report_max_age_days` | 2 = 只抓最近 2 天发布的；3 = **无法复核**的站点（LinkedIn）入库超过 3 天还没推出去就不再推送 |
@@ -310,8 +310,8 @@ python run.py apply <job_uid>     # 投递副驾（半自动填表）
 ### 合规与安全
 
 - **不自动提交投递**——代码里没有任何自动提交路径，最后一下永远由你点；
-- **不破解验证码、不绕过 Cloudflare**；无头浏览器默认如实声明自己是无头，
-  `browser.hide_headless` 可让你自己选择隐去这个标记（默认关闭）。
+- **不破解验证码、不绕过 Cloudflare**：遇到挑战页只等待，等不过就提示你手动处理。
+  无头标记由 `browser.hide_headless` 控制，默认为开。
 - **按求职阶段过滤**——默认 `career_stage: student` 只抓实习/兼职（学生签证合规）；
   拿到 IANG 后改成 `graduate` 或 `both` 即可。
 
@@ -481,8 +481,8 @@ flowchart LR
   time. LinkedIn needs a real account and a one-time login; JobsDB, Indeed and company career
   sites need no account at all — the first two just need one human-verification pass.
 - **Being blocked looks like "it ran but found nothing"**, not an error. Check
-  [guide · appendix C](docs/getting-started-zh.md#附-c常见问题) (Chinese); `browser.hide_headless`
-  is off by default and usually fixes it.
+  [guide · appendix C](docs/getting-started-zh.md#附-c常见问题) (Chinese). If it is
+  still zero, the exit IP is the usual suspect.
 - **Not 100% coverage** — it's a radar, not a guarantee of every posting.
 - **Keywords are on you** — it only looks for what you write, so a narrow list means
   missed roles. There is no cap, so pile on synonyms, abbreviations and the Chinese /
@@ -645,7 +645,7 @@ Everything is in `config.yaml` (see `config.example.yaml` for commented defaults
 | `notify.wecom` / `wxpusher` / `email` / `telegram` | credentials for each channel |
 | `keyword_rotation` | how many keywords to search per cycle (tune to your uptime) |
 | `daily_limits` | per-site page cap per Hong Kong calendar day |
-| `hide_headless` | hide the headless marker from the UA. Off by default; try it when a site runs cleanly but returns zero jobs |
+| `hide_headless` | hide the headless marker from the UA. On by default; turning it off usually locks JobsDB and Indeed out |
 | `location` | target region |
 | `score_threshold` / `realtime_threshold` | 60 = digest threshold, 80 = push-on-sight threshold |
 | `max_job_age_days` / `report_max_age_days` | 2 = only scrape postings from the last 2 days; 3 = for sources that **cannot** be re-checked (LinkedIn), never push anything that has sat unpushed for 3 days |
@@ -667,8 +667,8 @@ description and scores become far less meaningful.
 - **No auto-submit** — the code has no path that submits an application; the final
   click is always yours.
 - **No CAPTCHA cracking / Cloudflare bypass** — challenges are waited on or handed to
-  you, never solved. A headless browser states that it is headless by default;
-  `browser.hide_headless` lets you hide that marker yourself (off by default).
+  you, never solved. The headless marker is controlled by `browser.hide_headless`,
+  which defaults to on.
 - **Student-visa aware** — `career_stage: student` (the default) keeps
   internship/part-time only; switch to `graduate` / `both` only after you hold IANG.
 
