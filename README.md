@@ -136,8 +136,8 @@ flowchart LR
 
 - 有一定技术门槛——不过「一键安装脚本」已省去大部分；仍需自备 DeepSeek key 和配好一个推送通道
   （Windows 双击 `install.bat`，macOS 双击 `install.command`，流程一样）
-- 依赖第三方站点，抓取可能被限流或临时封锁。**LinkedIn 需要真实账号**并登录一次；
-  JobsDB、Indeed 和企业官网不需要账号，只要过一次人机验证（企业官网连这一步都没有）
+- 依赖第三方站点，抓取可能被限流或临时封锁。四个站点都不需要账号；
+  LinkedIn 被节流时登录一次会更稳，JobsDB 和 Indeed 只要过一次人机验证（企业官网连这一步都没有）
 - 被拦下的表现是「跑完了，但一个岗位都没有」，不报错。这时先看[教程 · 附 C](docs/getting-started-zh.md#附-c常见问题)；
   如果还是 0 个，多半是出口 IP 被这个站标成了高风险，换一个网络再试
 - 不保证 100% 覆盖——它是「雷达」，不是「全量抓取」
@@ -154,7 +154,7 @@ flowchart LR
 | --- | --- | --- |
 | 抓岗位 | `hk.jobsdb.com` | 开启 JobsDB（带 Cloudflare 防护，要过一次人机验证） |
 | 抓岗位 | `hk.indeed.com` | 开启 Indeed |
-| 抓岗位 | `www.linkedin.com` | 开启 LinkedIn（需要账号） |
+| 抓岗位 | `www.linkedin.com` | 开启 LinkedIn（不需要账号，被节流时登录一次更稳） |
 | 抓岗位 | 各企业自己的招聘域名（如 `*.myworkdayjobs.com`） | 开启「企业官网」来源 |
 | AI 打分 | `api.deepseek.com` | 始终需要 |
 | 推送 | `api.telegram.org` | 选了 Telegram |
@@ -478,8 +478,9 @@ flowchart LR
   on Windows, `install.command` on macOS) removes most of it; you still need a
   DeepSeek key and one configured push channel.
 - **Depends on third-party sites** — scraping may be rate-limited or blocked at any
-  time. LinkedIn needs a real account and a one-time login; JobsDB, Indeed and company career
-  sites need no account at all — the first two just need one human-verification pass.
+  time. None of the four need an account; logging into LinkedIn once helps when it
+  throttles you, and JobsDB / Indeed just need one human-verification pass
+  (company career sites skip even that).
 - **Being blocked looks like "it ran but found nothing"**, not an error. Check
   [guide · appendix C](docs/getting-started-zh.md#附-c常见问题) (Chinese). If it is
   still zero, the exit IP is the usual suspect.

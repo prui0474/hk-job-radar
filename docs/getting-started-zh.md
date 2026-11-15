@@ -280,7 +280,7 @@ Python 是运行本工具的基础，装一次就行。
 | `report_now.bat` | 立刻补发一次日报（强制，不查是否已发过）| 刚开机想马上看今天岗位 |
 | `board.bat` | **打开岗位工作台**（看岗位、看趋势、投递、导出）| 想挑岗位、动手投的时候 |
 | `login_jobsdb.bat` | 重新过 JobsDB 的防护验证（**不需要账号密码**） | 日报突然没岗位 / 日志提示过盾时 |
-| `login_linkedin.bat` | 登录 LinkedIn（**需要账号**，可选两条路） | 想让 LinkedIn 抓到更多岗位时 |
+| `login_linkedin.bat` | 登录 LinkedIn（可选，两种方式：真登录或搬 Cookie） | 想让 LinkedIn 抓到更多岗位时 |
 | `login_indeed.bat` | 单独确认 Indeed 能不能过验证（**不需要账号**） | 想先摸清 Indeed 那站通不通时 |
 | `doctor.bat` | **15 项体检，逐条告诉你哪里没配好** | 装完第一次、或任何「感觉不对」的时候 |
 | `setup.bat` | **打开网页改配置**（关键词、身份、推送通道、日报时间）| 想换岗位方向、换推送方式、改时间的时候 |
