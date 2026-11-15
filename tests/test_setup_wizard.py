@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
+import re
 import shutil
 import sys
 import tempfile
@@ -196,6 +198,70 @@ def test_render_keeps_every_source_switch():
         raw = yaml.safe_load(text)
         assert raw["sources"] == sources, f"{name} 的开关保存后丢了：{raw['sources']}"
         assert w.verify_config_text(text, form) == []
+
+
+def _sources_section_lines(text: str) -> list[str]:
+    """取出 sources 段的原文行（不含 header）。
+
+    必须按段取：daily_limits 段里也有 `  jobsdb:` / `  workday:`，缩进同样是
+    两格，全局正则会把它们一起数进来。
+    """
+    lines = text.splitlines()
+    start = next(i for i, ln in enumerate(lines) if re.match(r"^sources:", ln))
+    out: list[str] = []
+    for ln in lines[start + 1:]:
+        if ln.strip() and not ln.startswith((" ", "\t")):
+            break
+        out.append(ln)
+    return out
+
+
+def test_render_all_source_combinations_on_real_template():
+    """回归用例：真实模板的 sources 段中间夹着讲 Workday 的注释。
+
+    旧实现用整块正则重写，只吃连续的 `  key: value` 行，遇到注释就停；
+    于是期望 workday=false 时，新值插到注释上方、旧的 `workday: true` 还留在
+    注释下方 —— YAML 重复键后者胜出，用户「取消勾选 workday 就存不了」。
+    这里把四个开关的 16 种组合全跑一遍，就是当初漏掉的那一半。
+    """
+    template = _REAL_TEMPLATE.read_text(encoding="utf-8-sig")
+    combos = list(itertools.product((False, True), repeat=len(w.WIZARD_SOURCES)))
+    assert len(combos) == 2 ** len(w.WIZARD_SOURCES)
+    with Sandbox():
+        for combo in combos:
+            sources = dict(zip(w.WIZARD_SOURCES, combo))
+            form = w.form_from_payload(_payload(sources=sources))
+            text = w.render_config_text(form)
+            raw = yaml.safe_load(text)
+            assert raw["sources"] == sources, f"{sources} 写入后成了 {raw['sources']}"
+            assert w.verify_config_text(text, form) == []
+            # 模板里的讲解注释一句都不能少（含 workday 前面那五句）
+            assert text.count("#") >= template.count("#"), f"{sources} 的注释被吃掉了"
+
+
+def test_render_writes_each_source_switch_once():
+    """sources 段里每个开关只能出现一次，不能新旧两份并存。"""
+    with Sandbox():
+        form = w.form_from_payload(_payload(
+            sources={n: n == "jobsdb" for n in w.WIZARD_SOURCES}))
+        text = w.render_config_text(form)
+        section = "\n".join(_sources_section_lines(text))
+        for name in w.WIZARD_SOURCES:
+            hits = re.findall(rf"^  {name}:", section, re.MULTILINE)
+            assert len(hits) == 1, f"{name} 在 sources 段里出现了 {len(hits)} 次：{section}"
+
+
+def test_render_keeps_trailing_comment_on_source_line():
+    """开关行的行尾注释要留在原来的那一行上，改值不等于擦注释。"""
+    with Sandbox() as box:
+        text = box.template.read_text(encoding="utf-8-sig")
+        text = text.replace("  indeed: true\n", "  indeed: true      # 主要来源\n")
+        box.write_config(text)
+        form = w.form_from_payload(_payload(
+            sources={n: n == "jobsdb" for n in w.WIZARD_SOURCES}))
+        out = w.render_config_text(form)
+        assert re.search(r"^  indeed: false\s+# 主要来源$", out, re.MULTILINE), \
+            "\n".join(_sources_section_lines(out))
 
 
 def test_render_keeps_template_comments():

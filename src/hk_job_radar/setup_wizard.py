@@ -662,26 +662,78 @@ def _set_block_list(text: str, key: str, items: list[str], *, label: str,
 
 
 def _set_sources(text: str, sources: dict[str, bool]) -> str:
-    """整块重写 sources（各站点开关）。
+    """按行改写 sources 段（各站点开关），段内注释一律原样保留。
 
-    不用逐个 `_set_value` 的原因：`jobsdb:` 在 daily_limits 段里也出现一次，
-    逐个替换容易改错位置。整块替换只认 `sources:` 之后的连续若干行，没有歧义。
+    不用逐个 `_set_value` 的原因：`jobsdb:` / `workday:` 在 daily_limits 段里
+    也各出现一次，而且缩进同样是两格 —— 逐个替换会改错那一段。所以先框定
+    `sources:` 段的起止，只在段内动行。
 
-    ★ 重写的名单必须来自 WIZARD_SOURCES，不能就地写几个名字：
-    这是**整块替换**，漏写一个站点等于把它从配置里删掉。
+    也不再「整块正则重写」：模板的 sources 段中间夹着讲 Workday 的五句注释，
+    整块正则只吃连续的 `  key: value` 行，遇到注释就停，于是 workday 被当成
+    「段里没有的键」追加到注释上方，原来那行 `workday: true` 还留在注释下面。
+    YAML 重复键后者胜出 —— 用户取消勾选却存不进去，保存后校验还报不一致。
+
+    ★ 名单必须来自 WIZARD_SOURCES，不能就地写几个名字：
+    漏写一个站点，用户一保存，那个站点的开关就从配置里消失了。
     """
-    pattern = re.compile(r"^(sources:\n)((?:  [A-Za-z_]+:[^\n]*\n)*)", re.MULTILINE)
+    lines = text.splitlines(keepends=True)
+
+    start: Optional[int] = None
+    header_re = re.compile(r"^sources:[ \t]*(?:#.*)?$")
+    for i, line in enumerate(lines):
+        if header_re.match(line.rstrip("\n")):
+            start = i
+            break
+
     body = "".join(
         f"  {name}: {_yaml_scalar(bool(sources.get(name, False)))}\n"
         for name in WIZARD_SOURCES
     )
-    new_text, count = pattern.subn(lambda m: m.group(1) + body, text, count=1)
-    if count != 1:
+    if start is None:
         # 极旧的配置可能没有 sources 段：补到文件末尾，不整份重写
         tail = text.rstrip("\n")
         return (f"{tail}\n\n# ---- 由配置向导补充（旧版配置里还没有这一项）----\n"
                 f"sources:\n{body}")
-    return new_text
+
+    # 段的范围：从 header 往下，直到第一个顶格的非空行
+    end = start + 1
+    while end < len(lines):
+        line = lines[end]
+        if line.strip() and not line.startswith((" ", "\t")):
+            break
+        end += 1
+
+    seen: set[str] = set()
+    last_content = start        # 段内最后一个「非空、非纯注释」行，缺键时插在它后面
+    item_re = re.compile(r"^  ([A-Za-z_]+):(.*)$")
+    for i in range(start + 1, end):
+        raw_line = lines[i]
+        matched = item_re.match(raw_line.rstrip("\n"))
+        if matched:
+            name, rest = matched.group(1), matched.group(2)
+            if name in WIZARD_SOURCES:
+                nl = "\n" if raw_line.endswith("\n") else ""
+                # 行尾注释（含 # 前面的空格）原样搬过来，不重新排版
+                comment = ""
+                found = re.search(r"(\s+#[^\n]*)$", rest)
+                if found:
+                    comment = found.group(1)
+                lines[i] = (f"  {name}: "
+                            f"{_yaml_scalar(bool(sources.get(name, False)))}{comment}{nl}")
+                seen.add(name)
+        stripped = raw_line.lstrip()
+        if raw_line.strip() and not stripped.startswith("#"):
+            last_content = i
+
+    missing = [name for name in WIZARD_SOURCES if name not in seen]
+    if missing:
+        new_lines = [
+            f"  {name}: {_yaml_scalar(bool(sources.get(name, False)))}\n"
+            for name in missing
+        ]
+        lines[last_content + 1:last_content + 1] = new_lines
+
+    return "".join(lines)
 
 
 def render_config_text(form: WizardForm) -> str:
@@ -863,6 +915,7 @@ def _minimal_yaml() -> str:
         "  per_cycle: auto\n"
         "browser:\n"
         "  headless: true\n"
+        "  hide_headless: true\n"
         "  cloudflare_wait_seconds: 45\n"
         "llm:\n"
         '  provider: "deepseek"\n'
@@ -1189,7 +1242,10 @@ def current_state() -> dict[str, Any]:
             "keywords": list(cfg.keywords),
             "graduate_keywords": list(cfg.graduate_keywords),
             "career_stage": cfg.career_stage,
-            "sources": {n: bool(cfg.sources.get(n)) for n in ("jobsdb", "linkedin", "indeed")},
+            # 必须遍历 WIZARD_SOURCES：写死三个站点时，workday 在返回的字典里
+            # 根本不存在，前端 `!!(s.sources||{}).workday` 得到 false ——
+            # 配置里明明是 true，页面打开时那个复选框却是空的。
+            "sources": {n: bool(cfg.sources.get(n)) for n in WIZARD_SOURCES},
             "channel": (cfg.notify.channels[0] if cfg.notify.channels else ""),
             "report_time": cfg.report_time,
             "score_threshold": cfg.score_threshold,
