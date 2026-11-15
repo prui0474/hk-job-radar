@@ -181,6 +181,13 @@ class BrowserManager:
             if ua:
                 launch_extra["user_agent"] = ua
                 logger.debug(f"UA 已隐去无头标记：{ua}")
+            else:
+                # 开关开着但没读到 UA：浏览器仍会带着 HeadlessChrome 出去，
+                # 效果与没开这一项相同，必须让用户看见。
+                logger.warning(
+                    "hide_headless 已开启，但这次没读到浏览器的 UA，本轮没有隐去无头标记。"
+                    "JobsDB 和 Indeed 可能仍然抓不到岗位。可以先重跑一次；"
+                    "如果每次都这样，执行 playwright install chromium 检查浏览器内核。")
         elif headless:
             # 无头又没隐去标记：Cloudflare 会认出来，站点静默地一个岗位都不给。
             logger.warning(

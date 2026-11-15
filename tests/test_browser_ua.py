@@ -8,10 +8,11 @@ UA 里写着 `HeadlessChrome` 的会话。同一台机器、同一份启动参�
 | HeadlessChrome/156 | 45 秒不放行 | 0 |
 | Chrome/157 | 没有出现 | 30 |
 
-这里锁三件事：
+这里锁四件事：
 1. 只替换 `HeadlessChrome` 这一个词，版本号与平台原样保留；
-2. 开关关闭时不传 `user_agent`（产品默认值必须与 README 的说法一致）；
-3. 有头模式不传，UA 本来就没有那个词，多此一举。
+2. 开关关闭时不传 `user_agent`；
+3. 有头模式不传，UA 本来就没有那个词，多此一举；
+4. 开关开着但读不到 UA 时必须报警，否则日志里看不出「开了没生效」。
 
 兼容两种运行方式：pytest 与 `python tests/test_browser_ua.py`。
 """
@@ -157,6 +158,41 @@ def test_probe_failure_falls_back_to_no_override(tmp_path):
     manager._playwright = fake
     _launch(manager, "testsrc", tmp_path)
     assert "user_agent" not in fake.chromium.persistent_kwargs
+
+
+def test_probe_failure_warns_that_ua_was_not_hidden(tmp_path, monkeypatch):
+    """开了开关却没读到 UA 时必须报警：否则日志里看不出「开了没生效」。"""
+    from unittest import mock
+
+    cfg = AppConfig(browser_headless=True, browser_hide_headless=True)
+    manager = BrowserManager(cfg)
+    fake = _FakePlaywright(HEADLESS_UA)
+    manager._playwright = fake
+    monkeypatch.setattr(manager, "resolve_headless_user_agent", lambda: None)
+
+    with mock.patch("hk_job_radar.scrapers.browser.logger") as fake_logger:
+        _launch(manager, "testsrc", tmp_path)
+
+    assert "user_agent" not in fake.chromium.persistent_kwargs
+    warnings = " ".join(str(c.args[0]) for c in fake_logger.warning.call_args_list)
+    assert "头标记" in warnings, "必须说明本轮没有隐去无头标记"
+    assert "playwright install chromium" in warnings, "要给出内核检查的办法"
+
+
+def test_no_warning_when_switch_is_off(tmp_path):
+    """开关关掉时走的是「你没开」那条提示，不该误报成「开了没生效」。"""
+    from unittest import mock
+
+    cfg = AppConfig(browser_headless=True, browser_hide_headless=False)
+    manager = BrowserManager(cfg)
+    fake = _FakePlaywright(HEADLESS_UA)
+    manager._playwright = fake
+
+    with mock.patch("hk_job_radar.scrapers.browser.logger") as fake_logger:
+        _launch(manager, "testsrc", tmp_path)
+
+    warnings = " ".join(str(c.args[0]) for c in fake_logger.warning.call_args_list)
+    assert "没读到浏览器的 UA" not in warnings
 
 
 if __name__ == "__main__":
