@@ -9,11 +9,18 @@
 
 | | 三大站点 | Workday |
 |---|---|---|
-| 传输 | 浏览器渲染整页 | 纯 HTTP + JSON |
-| 反爬 | Cloudflare 挑战 / 登录墙 / 限流 | 无（公开的岗位检索接口） |
+| 传输 | 浏览器渲染整页 | 浏览器页面内 `fetch()` 拿 JSON |
+| 反爬 | Cloudflare 挑战 / 登录墙 / 限流 | **接口同样有 Cloudflare**（见下） |
 | 发布时间 | Indeed 拿不到、Others 只能解析相对文案 | 接口直接给 |
 | 完整 JD | 要开详情页 | 接口直接给 |
 | 还在招吗 | 要开详情页猜文案 | 接口直接给布尔值 `canApply` |
+
+接口的 Cloudflare 这一条曾经写的是「无（公开的岗位检索接口）」，已过期：
+2026-11 实测用 urllib 直连 cxs 接口，5 家雇主全部返回 429，响应头带
+`Cf-Mitigated: challenge` / `Server: cloudflare`；同一台机器、同一个出口 IP，
+换成 Playwright 打开招聘页后在**页面内** `fetch()` 同一接口，5 家全部 200。
+所以拦的是请求指纹，不是 IP。现在的做法是走 `BrowserManager.fetch_json`
+（页面内请求，同源、带真实浏览器指纹），urllib 只作为没有浏览器时的退路。
 
 最后一行是关键：`canApply` 让我们不用打开任何页面就知道这个岗位还能不能投。
 这正好补上「列表页看不到关闭状态」那个天生盲区。
@@ -64,9 +71,10 @@ from loguru import logger
 from hk_job_radar.config import DATA_DIR
 from hk_job_radar.models import HK_TZ, JobPosting, now_hk
 from hk_job_radar.scrapers.base import BaseScraper, LimitReachedError
+from hk_job_radar.scrapers.browser import BrowserFetchError
 from hk_job_radar.scrapers.job_types import extract_site_job_type
 
-#: 用户自己的雇主清单（个人数据，不进 git）。不存在时用下面内置的三家。
+#: 用户自己的雇主清单（个人数据，不进 git）。不存在时用下面内置的五家。
 EMPLOYERS_FILE = DATA_DIR / "workday_employers.yaml"
 
 #: 内置雇主：2026-10-20 逐个实测通过、且确实挂着香港岗位的机构。
@@ -118,7 +126,10 @@ MAX_PAGES_PER_EMPLOYER = 12
 #: 单个雇主最多取多少条详情。详情 = 1 次请求，用来拿 canApply 与完整 JD。
 #: 实测一次详情约 1 秒，所以下面用 6 个线程并发，60 条约 10 秒。
 MAX_DETAILS_PER_EMPLOYER = 60
-#: 取详情的并发线程数。Workday 没有反爬，6 并发既快又不会给对方压力。
+#: 取详情的并发线程数（仅 urllib 退路使用）。
+#: 走浏览器时详情是**串行**取的：Playwright 的同步接口绑在创建它的线程上，
+#: 在 ThreadPoolExecutor 里调 page.evaluate 会直接抛 greenlet 错误。
+#: 页面内 fetch 本身很快，串行 60 条约十几秒，够用。
 DETAIL_WORKERS = 6
 #: 即便 canApply=True，发布超过这么多天的岗位也不再推。
 #: 为什么还要有这条：有些雇主把「长期招聘」的 requisition 挂几个月不关，
@@ -145,7 +156,7 @@ def load_employers() -> dict[str, dict[str, Any]]:
     """内置名单 + 用户文件，合并后返回「key → 雇主配置」。
 
     合并而不是覆盖整份：用户文件里通常只写他关心的几家，
-    若整份替换就会把内置的三家悄悄弄丢——那种「本来有、后来没了」最难排查。
+    若整份替换就会把内置的五家悄悄弄丢——那种「本来有、后来没了」最难排查。
     """
     merged: dict[str, dict[str, Any]] = {
         k: {**v, "enabled": True} for k, v in DEFAULT_EMPLOYERS.items()
@@ -219,6 +230,7 @@ class WorkdayScraper(BaseScraper):
             return []
 
         all_jobs: list[JobPosting] = []
+        failed: list[tuple[str, dict, Exception]] = []
         for key, employer in enabled.items():
             try:
                 jobs = self._fetch_employer(key, employer, last_seen_cutoff)
@@ -229,12 +241,46 @@ class WorkdayScraper(BaseScraper):
             except Exception as exc:
                 # 单家失败绝不影响其他家：公司清单里混进一个写错的 tenant 是常态
                 logger.warning(f"[workday] {employer.get('name', key)} 抓取失败（跳过这家）：{exc}")
+                failed.append((key, employer, exc))
                 continue
             logger.info(f"[workday] {employer.get('name', key)}：{len(jobs)} 个香港岗位")
             all_jobs.extend(jobs)
 
+        if failed and len(failed) == len(enabled):
+            # 全灭不是「今天这几家刚好没岗位」，是链路坏了。必须报 error：
+            # 静默返回 0 条会让用户以为公司没在招人，实际是接口被 Cloudflare 挡了。
+            self._log_all_failed(failed)
+        elif failed:
+            logger.warning(
+                f"[workday] 本轮有 {len(failed)}/{len(enabled)} 家雇主失败，"
+                f"其余雇主正常返回。")
+
         logger.info(f"[workday] 本轮共解析到 {len(all_jobs)} 个岗位")
         return all_jobs
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _log_all_failed(failed: list[tuple[str, dict, Exception]]) -> None:
+        """所有雇主都失败时打一条能定位问题的 error（不静默返回空）。"""
+        key, employer, exc = failed[0]
+        name = employer.get("name", key)
+        url = (f"{employer.get('base_url', '')}"
+               f"/wday/cxs/{employer.get('tenant', '')}/{employer.get('site', '')}")
+        status = WorkdayScraper._status_of(exc)
+        status_text = f"HTTP {status}" if status else "无状态码"
+        if all(WorkdayScraper._is_cloudflare_block(e) for _, _, e in failed):
+            logger.error(
+                f"[workday] Workday 的接口被 Cloudflare 挑战，本轮 0 条："
+                f"{len(failed)} 家雇主全部失败。\n"
+                f"    第一家失败：{name} {url}（{status_text}）。"
+                f"原因：{exc}\n"
+                f"    这不是你配错了——urllib 直连的请求指纹会被 Cloudflare 认出来。"
+                f"程序已改用浏览器页面内请求；\n"
+                f"    如果仍然全灭，检查本机网络是否能正常打开上面的招聘页。")
+            return
+        logger.error(
+            f"[workday] 本轮 0 条：{len(failed)} 家雇主全部抓取失败。\n"
+            f"    第一家失败：{name} {url}（{status_text}）。原因：{exc}")
 
     # ------------------------------------------------------------------
     def _fetch_employer(self, key: str, employer: dict,
@@ -248,10 +294,12 @@ class WorkdayScraper(BaseScraper):
         hk_facets = self._discover_hk_facets(employer)
         try:
             listing = self._collect_postings(employer, hk_facets)
-        except urllib.error.HTTPError as exc:
+        except Exception as exc:
             # 筛选参数名对不上时接口会 400（实测有的站点这么干）。
             # 与其让整家公司消失，不如不要筛选、把岗位全捞回来本地筛。
-            if exc.code != 400 or not hk_facets:
+            # 状态码要从两种传输方式里统一取：浏览器走 BrowserFetchError，
+            # 退路走 urllib 的 HTTPError。
+            if self._status_of(exc) != 400 or not hk_facets:
                 raise
             logger.debug(f"[workday] {employer.get('name', key)} 不接受筛选参数 "
                          f"{hk_facets[0]}，退回本地筛选")
@@ -374,17 +422,22 @@ class WorkdayScraper(BaseScraper):
 
     def _fetch_details(self, employer: dict,
                        paths: list[str]) -> dict[str, Optional[dict]]:
-        """并发取详情（每个 1 次请求，实测一次约 1 秒）。
+        """取详情（每个 1 次请求）。
 
-        为什么要并发：一家公司的香港候选常有五六十条，串行要一分钟；
-        6 个线程压到十秒左右。Workday 是公开的岗位接口、没有反爬，
-        6 并发既快又谈不上给对方压力。
+        为什么走浏览器时串行：Playwright 的同步接口绑在创建它的线程上，
+        在 ThreadPoolExecutor 里调 `page.evaluate` 会直接抛 greenlet 错误。
+        页面内 fetch 本身没有网络栈开销，60 条串行十几秒，够用。
+        urllib 退路仍然并发 6 个（一家公司的香港候选常有五六十条，
+        串行要一分钟）。
         """
         if not paths:
             return {}
-        if len(paths) == 1:
-            return {paths[0]: self._detail(employer, paths[0])}
-        results: dict[str, Optional[dict]] = {}
+        if self.browser is not None or len(paths) == 1:
+            results: dict[str, Optional[dict]] = {}
+            for path in paths:
+                results[path] = self._detail(employer, path)
+            return results
+        results = {}
         with ThreadPoolExecutor(max_workers=DETAIL_WORKERS) as pool:
             futures = {pool.submit(self._detail, employer, p): p for p in paths}
             for fut in as_completed(futures):
@@ -395,8 +448,40 @@ class WorkdayScraper(BaseScraper):
                     results[path] = None
         return results
 
-    def _request(self, url: str, payload: dict | None = None) -> dict:
-        """发一次请求并解析 JSON。payload 为 None 时是 GET，否则 POST。"""
+    #: 走浏览器时所有雇主共用这一个 source_key / page / profile。
+    #: 五家域名不同，但每家用之前都会 goto 到自己站内页面（见 _request），
+    #: 所以不需要五个 context——那会建五个 profile，又重又慢。
+    BROWSER_SOURCE_KEY = "workday"
+
+    def _request(self, url: str, payload: dict | None = None,
+                 origin_url: str | None = None) -> dict:
+        """发一次请求并解析 JSON。payload 为 None 时是 GET，否则 POST。
+
+        有浏览器时走 `BrowserManager.fetch_json`（页面内 fetch），
+        没有浏览器时（单测、playwright 未安装）退回 urllib。
+
+        origin_url 是「先导航到哪个站内页面」的地址。页面内 fetch 受同源
+        策略约束，必须先停在目标站点自己的页面上，否则会被 CORS 挡掉——
+        这也是为什么浏览器请求比 urllib 多一步 goto。
+        """
+        if self.browser is None:
+            return self._request_via_urllib(url, payload)
+        return self._request_via_browser(url, payload, origin_url)
+
+    def _request_via_browser(self, url: str, payload: dict | None,
+                             origin_url: str | None) -> dict:
+        origin = origin_url or f"{url.split('/wday/')[0]}/"
+        try:
+            self.browser.open_origin(self.BROWSER_SOURCE_KEY, origin)
+            return self.browser.fetch_json(self.BROWSER_SOURCE_KEY, url, payload)
+        except BrowserFetchError as exc:
+            if exc.status == 422:
+                raise ValueError("tenant / site 参数不对（接口返回 422），"
+                                 "请核对 data/workday_employers.yaml") from exc
+            raise
+
+    def _request_via_urllib(self, url: str, payload: dict | None = None) -> dict:
+        """urllib 退路：没有浏览器时用（单测 / 未安装 playwright）。"""
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
         req = urllib.request.Request(url, data=data, method="POST" if data else "GET")
         req.add_header("Content-Type", "application/json")
@@ -416,6 +501,25 @@ class WorkdayScraper(BaseScraper):
                                  "请核对 data/workday_employers.yaml") from exc
             raise
 
+    @staticmethod
+    def _status_of(exc: Exception) -> int:
+        """异常里能拿到的 HTTP 状态码（拿不到返回 0），只用于日志定位。"""
+        if isinstance(exc, BrowserFetchError):
+            return exc.status
+        if isinstance(exc, urllib.error.HTTPError):
+            return exc.code
+        return 0
+
+    @staticmethod
+    def _is_cloudflare_block(exc: Exception) -> bool:
+        """这次失败是不是「被 Cloudflare 挑战」：429 或响应头带 Cf-Mitigated。"""
+        if isinstance(exc, BrowserFetchError):
+            return exc.is_cloudflare_challenge
+        if isinstance(exc, urllib.error.HTTPError):
+            header = (exc.headers or {}).get("Cf-Mitigated") if exc.headers else None
+            return exc.code == 429 or bool(header)
+        return False
+
     def _search(self, employer: dict, applied_facets: dict, offset: int = 0,
                 keyword: str = "") -> dict:
         """调一次岗位检索。keyword 留空 = 不按文字筛，只按 facet（地点等）筛。"""
@@ -426,13 +530,19 @@ class WorkdayScraper(BaseScraper):
             "limit": PAGE_SIZE,     # >20 会 400，别改
             "offset": offset,
             "searchText": keyword,
-        })
+        }, origin_url=self._site_url(employer))
+
+    @staticmethod
+    def _site_url(employer: dict) -> str:
+        """雇主的招聘站首页：浏览器里先导航到这里，再 fetch 同源接口。"""
+        return f"{employer['base_url']}/{employer['site']}"
 
     def _detail(self, employer: dict, external_path: str) -> Optional[dict]:
         url = (f"{employer['base_url']}/wday/cxs/{employer['tenant']}"
                f"/{employer['site']}{external_path}")
         try:
-            return (self._request(url) or {}).get("jobPostingInfo")
+            return (self._request(url, origin_url=self._site_url(employer)) or {}
+                    ).get("jobPostingInfo")
         except Exception as exc:
             # 单个岗位详情失败不该拖垮整家：最多就是这条不推
             logger.debug(f"[workday] 取详情失败（跳过该岗位）{external_path}：{exc}")

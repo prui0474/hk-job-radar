@@ -143,11 +143,13 @@ def test_posted_on_relative_text():
     assert yday is not None and 20 < (now - yday).total_seconds() / 3600 < 28
 
     d6 = sc._extract_posted_at("Posted 6 Days Ago")
-    assert d6 is not None and (now - d6).days == 6
+    # 比「days == 6」宽松一点点：_extract_posted_at 内部自己取了一次 now，
+    # 与上面那行 now 差几微秒就可能让 .days 掉到 5，是本来就会偶发失败的写法。
+    assert d6 is not None and abs((now - d6).total_seconds() - 6 * 86400) < 5
 
     # 「30+ Days Ago」是最后一档，只能当下限处理，不能当成恰好 30 天
     d30 = sc._extract_posted_at("Posted 30+ Days Ago")
-    assert d30 is not None and (now - d30).days >= 30
+    assert d30 is not None and (now - d30).total_seconds() >= 30 * 86400 - 5
 
 
 def test_posted_on_unknown_text_returns_none():
@@ -430,6 +432,221 @@ def test_verified_open_job_bypasses_age_filter():
     stub = type("S", (), {"config": cfg})()
     kept = Pipeline._filter_by_age(stub, [fresh, stale])
     assert kept == [fresh], "能确认还在招的岗位不该被年龄砍掉"
+
+
+# ---------------------------------------------------------------------------
+# 11. 请求出口：有浏览器走页面内 fetch，没有才退回 urllib
+# ---------------------------------------------------------------------------
+class _FakeBrowser:
+    """记录调用顺序的假 BrowserManager（只实现 workday 用到的两个方法）。"""
+
+    def __init__(self, responses: list) -> None:
+        self.responses = list(responses)
+        self.opened: list[tuple[str, str]] = []
+        self.fetches: list[dict] = []
+
+    def open_origin(self, source_key: str, url: str):
+        self.opened.append((source_key, url))
+
+    def fetch_json(self, source_key: str, url: str, payload: dict | None = None,
+                   timeout_ms: int = 30000) -> dict:      # noqa: ARG002
+        self.fetches.append({"source": source_key, "url": url, "payload": payload})
+        item = self.responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def test_request_uses_browser_and_opens_employer_site():
+    """浏览器是唯一出口：先导航到该雇主站内页面，再 fetch 同域接口。"""
+    browser = _FakeBrowser([{"total": 1, "jobPostings": []}])
+    sc = WorkdayScraper(_cfg(), browser=browser)
+    url = "https://example.wd3.myworkdayjobs.com/wday/cxs/example/External/jobs"
+    got = sc._request(url, {"limit": 20},
+                      origin_url="https://example.wd3.myworkdayjobs.com/External")
+    assert got == {"total": 1, "jobPostings": []}
+    assert browser.opened == [("workday", "https://example.wd3.myworkdayjobs.com/External")]
+    assert browser.fetches[0]["url"] == url
+    assert browser.fetches[0]["payload"] == {"limit": 20}
+
+
+def test_search_and_detail_route_through_one_shared_page():
+    """5 家雇主共用一个 source_key（一个 profile），不是一家一个 context。"""
+    browser = _FakeBrowser([{"jobPostings": []},
+                            {"jobPostingInfo": {"title": "X"}}])
+    sc = WorkdayScraper(_cfg(), browser=browser)
+    sc._search(EMP, {})
+    sc._detail(EMP, "/job/1")
+    assert {src for src, _ in browser.opened} == {"workday"}
+    assert browser.opened[0][1] == f"{EMP['base_url']}/{EMP['site']}"
+    assert browser.fetches[0]["url"].endswith("/jobs")
+    assert browser.fetches[1]["url"].endswith("/job/1")
+
+
+def test_request_propagates_browser_fetch_error():
+    """page.evaluate 失败时要把 BrowserFetchError（带状态码/片段）抛给上层。"""
+    from hk_job_radar.scrapers.browser import BrowserFetchError
+
+    err = BrowserFetchError("页面内请求失败：HTTP 429", url="https://x",
+                            status=429, snippet="error code: 1015",
+                            cf_mitigated=True)
+    sc = WorkdayScraper(_cfg(), browser=_FakeBrowser([err]))
+    try:
+        sc._request("https://example.wd3.myworkdayjobs.com/wday/cxs/e/E/jobs")
+    except BrowserFetchError as exc:
+        assert exc.status == 429 and exc.cf_mitigated is True
+        assert exc.is_cloudflare_challenge is True
+    else:                                             # pragma: no cover
+        raise AssertionError("浏览器请求失败不能被吞掉")
+
+
+def test_request_422_via_browser_becomes_actionable_value_error():
+    from hk_job_radar.scrapers.browser import BrowserFetchError
+
+    sc = WorkdayScraper(_cfg(), browser=_FakeBrowser([
+        BrowserFetchError("HTTP 422", url="https://x", status=422)]))
+    try:
+        sc._request("https://example.wd3.myworkdayjobs.com/wday/cxs/e/E/jobs")
+    except ValueError as exc:
+        assert "422" in str(exc) and "tenant" in str(exc)
+    else:                                             # pragma: no cover
+        raise AssertionError("422 应当提示 tenant / site 写错了")
+
+
+def test_request_falls_back_to_urllib_without_browser():
+    """没有浏览器（单测 / 未安装 playwright）时老路必须还能走。"""
+    import urllib.request
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b'{"total": 7, "jobPostings": []}'
+
+    captured = {}
+
+    def _fake_urlopen(req, timeout=0):                # noqa: ARG001
+        captured["method"] = req.get_method()
+        captured["url"] = req.full_url
+        return _Resp()
+
+    original = urllib.request.urlopen
+    urllib.request.urlopen = _fake_urlopen
+    try:
+        sc = WorkdayScraper(_cfg(), browser=None)
+        got = sc._request("https://example.wd3.myworkdayjobs.com/wday/cxs/e/E/jobs",
+                          {"limit": 20})
+    finally:
+        urllib.request.urlopen = original
+    assert got == {"total": 7, "jobPostings": []}
+    assert captured["method"] == "POST"
+
+
+# ---------------------------------------------------------------------------
+# 12. 被 Cloudflare 挑战时不许静默返回空
+# ---------------------------------------------------------------------------
+def _two_employers() -> dict:
+    return {
+        "a": {"name": "A 银行", "base_url": "https://a.wd3.myworkdayjobs.com",
+              "tenant": "a", "site": "Ext", "enabled": True},
+        "b": {"name": "B 保险", "base_url": "https://b.wd3.myworkdayjobs.com",
+              "tenant": "b", "site": "Ext", "enabled": True},
+    }
+
+
+def test_all_employers_challenged_logs_error(monkeypatch):
+    """全灭 = 链路坏了，必须 error 报出来，不能只是 info 一句「0 个岗位」。"""
+    from unittest import mock
+
+    from hk_job_radar.scrapers.browser import BrowserFetchError
+
+    monkeypatch.setattr(wd, "load_employers", _two_employers)
+    sc = WorkdayScraper(_cfg(), browser=None)
+
+    def _challenged(key, employer, cutoff):            # noqa: ARG001
+        raise BrowserFetchError(
+            "页面内请求失败：HTTP 429", url=f"{employer['base_url']}/x",
+            status=429, snippet="error code: 1015", cf_mitigated=True)
+
+    monkeypatch.setattr(sc, "_fetch_employer", _challenged)
+    with mock.patch.object(wd, "logger") as fake_logger:
+        assert sc._do_fetch(now_hk()) == []
+
+    msg = " ".join(str(c.args[0]) for c in fake_logger.error.call_args_list)
+    assert "被 Cloudflare 挑战" in msg
+    assert "0 条" in msg
+    assert "https://a.wd3.myworkdayjobs.com/wday/cxs/a/Ext" in msg
+    assert "429" in msg
+
+
+def test_partial_failure_keeps_working_employers(monkeypatch):
+    """一家被挑战只跳过那一家，其余雇主的结果照常返回。"""
+    from unittest import mock
+
+    from hk_job_radar.scrapers.browser import BrowserFetchError
+
+    monkeypatch.setattr(wd, "load_employers", _two_employers)
+    sc = WorkdayScraper(_cfg(), browser=None)
+    job = JobPosting(source="workday", external_id="b-1", title="Data Analyst",
+                     company="B 保险", url="https://b/1", url_normalized="https://b/1")
+
+    def _fetch(key, employer, cutoff):                 # noqa: ARG001
+        if key == "a":
+            raise BrowserFetchError("HTTP 429", url="https://a/x", status=429,
+                                    cf_mitigated=True)
+        return [job]
+
+    monkeypatch.setattr(sc, "_fetch_employer", _fetch)
+    with mock.patch.object(wd, "logger") as fake_logger:
+        got = sc._do_fetch(now_hk())
+    assert got == [job]
+    assert fake_logger.error.call_args_list == [], "只失败一家不该报 error"
+
+
+def test_facet_400_in_browser_mode_retries_without_filter():
+    """浏览器模式下 400 也得能退回「不筛选」——否则这家公司整家消失。"""
+    from hk_job_radar.scrapers.browser import BrowserFetchError
+
+    class _Scraper(WorkdayScraper):
+        def __init__(self):
+            super().__init__(_cfg(), browser=_FakeBrowser([]))
+            self.attempts: list = []
+
+        def _discover_hk_facets(self, employer):       # noqa: ARG002
+            return ("primaryLocation", ["id-Hong Kong"])
+
+        def _collect_postings(self, employer, hk_facets):   # noqa: ARG002
+            self.attempts.append(hk_facets)
+            if hk_facets:
+                raise BrowserFetchError("HTTP 400", status=400)
+            return {"/job/1": {"title": "Data Analyst",
+                               "locationsText": "Hong Kong",
+                               "postedOn": "Posted Today"}}
+
+        def _fetch_details(self, employer, paths):      # noqa: ARG002
+            return {"/job/1": _detail_payload(jobReqId="A1")}
+
+    sc = _Scraper()
+    jobs = sc._fetch_employer("test", EMP, now_hk() - timedelta(days=7))
+    assert [j.external_id for j in jobs] == ["test-A1"]
+    assert sc.attempts == [("primaryLocation", ["id-Hong Kong"]), None]
+
+
+def test_details_are_serial_when_browser_is_used():
+    """Playwright 同步接口绑定线程：浏览器模式下详情必须串行，不能进线程池。"""
+    import threading
+
+    sc = WorkdayScraper(_cfg(), browser=_FakeBrowser([]))
+    calls: list[tuple[str, str]] = []
+    sc._detail = lambda emp, p: calls.append((p, threading.current_thread().name))
+    sc._fetch_details(EMP, ["/job/1", "/job/2", "/job/3"])
+    here = threading.current_thread().name
+    assert [p for p, _ in calls] == ["/job/1", "/job/2", "/job/3"]
+    assert all(name == here for _, name in calls)
 
 
 if __name__ == "__main__":

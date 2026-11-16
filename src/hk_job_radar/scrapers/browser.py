@@ -10,13 +10,19 @@
 
 合规红线：本模块不做任何"破解"——不注入 JS 伪造指纹、不伪造请求头。
 遇到 Cloudflare 挑战页的策略只有一种：等待 + 提示用户用 login 模式手动处理。
+
+`fetch_json` 用页面内 `fetch()` 请求接口，同样不是破解：那就是这个浏览器
+自己发出的请求（真实 TLS/HTTP2 指纹、真实 Cookie），跟用户在地址栏里
+打开页面后 DevTools 里发请求没有区别。
 """
 from __future__ import annotations
 
+import json
 import random
 import re
 import time
 from typing import Optional
+from urllib.parse import urlsplit
 
 from loguru import logger
 
@@ -57,6 +63,69 @@ def build_proxy_args(proxy: str) -> list[str]:
     if value.lower() == "system":
         return []
     return [f"--proxy-server={value}"]
+
+
+class BrowserFetchError(RuntimeError):
+    """页面内 fetch 失败（HTTP 非 2xx、JSON 解析失败、或 fetch 本身抛错）。
+
+    单独定成一个异常类型，是为了让上层能判断「这次失败是不是 Cloudflare
+    挑战」——`status == 429` 或响应头带 `Cf-Mitigated` 就是被挑战，
+    该跳过的跳过、该报错的报错，而不是把「被拦」误当成「这家公司没岗位」。
+    """
+
+    def __init__(self, message: str, *, url: str = "", status: int = 0,
+                 snippet: str = "", cf_mitigated: bool = False) -> None:
+        super().__init__(message)
+        self.url = url
+        self.status = status
+        self.snippet = snippet
+        self.cf_mitigated = cf_mitigated
+
+    @property
+    def is_cloudflare_challenge(self) -> bool:
+        return self.status == 429 or self.cf_mitigated
+
+
+#: 在页面里跑 fetch 的脚本。参数化成一个 arg 对象，避免拼接字符串注入。
+#:
+#: 为什么必须用 page.evaluate 而不是 page.request：
+#: page.request 是 Playwright 的 APIRequestContext，走的是 Playwright 自己
+#: 的网络栈，TLS/HTTP2 指纹和 urllib 一样"不像浏览器"——实测仍会被
+#: Cloudflare 以 429 + Cf-Mitigated 挡下。只有页面内 fetch 带的是这个
+#: 浏览器进程真实的指纹与 Cookie，才能过。
+_FETCH_JSON_JS = """
+async ({url, payload, timeoutMs}) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const headers = {
+      'Accept': 'application/json',
+      'Accept-Language': 'en-US,en;q=0.9',
+    };
+    const init = {
+      method: 'GET',
+      headers: headers,
+      credentials: 'include',
+      signal: controller.signal,
+    };
+    if (payload !== null) {
+      headers['Content-Type'] = 'application/json';
+      init.method = 'POST';
+      init.body = JSON.stringify(payload);
+    }
+    const resp = await fetch(url, init);
+    const text = await resp.text();
+    return {
+      ok: resp.ok,
+      status: resp.status,
+      text: text,
+      cfMitigated: resp.headers.get('cf-mitigated') || '',
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+"""
 
 
 class BrowserManager:
@@ -283,6 +352,106 @@ class BrowserManager:
                 f"（Mac 上是 login_*.command），\n"
                 f"    在弹出的浏览器里手动点一下验证，看到正常页面后关掉它，再重新启动。")
         return False
+
+    # ------------------------------------------------------------------
+    def open_origin(self, source_key: str, url: str, timeout_ms: int = 60000):
+        """确保 page 停在 `url` 所在站点的页面上，返回该 page。
+
+        为什么必须先在目标站点自己的页面上：
+        页面内 fetch 受**同源策略**约束。在 A 站页面里 fetch B 站的接口，
+        浏览器先发 CORS 预检，对方不返回 Access-Control-Allow-Origin 就直接
+        拒绝——连请求都不会真正发出去。Workday 的 cxs 接口不开放 CORS，
+        所以只能先导航到它自己的招聘页，再 fetch 同源的 `/wday/cxs/...`。
+
+        同一站点不重复导航（page.url 的 host 相同就直接复用），这样
+        一家雇主几十条详情请求只有第一次付导航开销。
+        """
+        page = self.launch(source_key)
+        target = urlsplit(url)
+        current = urlsplit(page.url or "")
+        if (current.scheme in ("http", "https")
+                and current.netloc.lower() == target.netloc.lower()):
+            return page
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+        except Exception as exc:
+            raise BrowserFetchError(
+                f"打开目标站点页面失败：{url}（{exc}）", url=url) from exc
+        # 挑战没自动通过就不要硬发请求：那只会拿到 429，还得再等一轮。
+        # quiet=True：workday 这类站点没有专门的 login_*.bat，通用的
+        # 「双击 login 文件」提示对它没有用，交给调用方给更准确的话。
+        if not self.wait_cloudflare(page, quiet=True):
+            raise BrowserFetchError(
+                f"目标站点页面卡在 Cloudflare 挑战上过不去：{url}",
+                url=url, cf_mitigated=True)
+        return page
+
+    # ------------------------------------------------------------------
+    def fetch_json(self, source_key: str, url: str, payload: dict | None = None,
+                   timeout_ms: int = 30000) -> dict:
+        """在已打开的页面里用 `fetch()` 请求 JSON 接口，返回解析后的 dict。
+
+        走浏览器页面内请求而不是 urllib / page.request，是因为后两者的
+        请求指纹（TLS、HTTP/2 帧、头顺序）与真实浏览器不一致，会被
+        Cloudflare 识别。2026-11 实测：同一台机器同一个出口 IP，urllib
+        直连 5 家 Workday 全部 429（响应头 `Cf-Mitigated: challenge`），
+        换成页面内 fetch 同一接口 5 家全部 200。
+
+        **调用方必须先让 page 停在目标站点自己的页面上**（用
+        `open_origin()`）——跨域 fetch 会被 CORS 挡掉，同源才能过。
+        这里会再核一次页面 host，不同源就直接报错，免得拿到一条看不懂的
+        CORS 失败信息。
+
+        HTTP 非 2xx、fetch 抛错、JSON 解析失败都抛 BrowserFetchError，
+        并把状态码与响应片段带出来，避免"静默 0 条"。
+        """
+        page = self.launch(source_key)
+        target = urlsplit(url)
+        current = urlsplit(page.url or "")
+        if current.netloc.lower() != target.netloc.lower():
+            raise BrowserFetchError(
+                f"页面不在目标站点上（当前 {current.netloc or '空白页'}，"
+                f"目标 {target.netloc}）：跨域 fetch 会被 CORS 挡掉。"
+                f"调用方需要先 open_origin()。", url=url)
+        try:
+            result = page.evaluate(_FETCH_JSON_JS, {
+                "url": url,
+                "payload": payload,
+                "timeoutMs": timeout_ms,
+            })
+        except Exception as exc:
+            # fetch 自己 reject（断网、超时 abort、页面正在跳转）都会落到这里
+            raise BrowserFetchError(
+                f"页面内 fetch 失败：{url}（{exc}）", url=url) from exc
+
+        if not isinstance(result, dict):
+            raise BrowserFetchError(
+                f"页面内 fetch 返回了意外结果：{url}", url=url)
+
+        status = int(result.get("status") or 0)
+        text = str(result.get("text") or "")
+        cf_mitigated = bool(result.get("cfMitigated"))
+        snippet = text[:300]
+        if not result.get("ok"):
+            raise BrowserFetchError(
+                f"页面内请求失败：HTTP {status} {url}；响应片段：{snippet!r}",
+                url=url, status=status, snippet=snippet,
+                cf_mitigated=cf_mitigated)
+        try:
+            data = json.loads(text)
+        except ValueError as exc:
+            raise BrowserFetchError(
+                f"页面内请求返回的不是合法 JSON：HTTP {status} {url}；"
+                f"响应片段：{snippet!r}",
+                url=url, status=status, snippet=snippet,
+                cf_mitigated=cf_mitigated) from exc
+        if not isinstance(data, dict):
+            raise BrowserFetchError(
+                f"页面内请求返回的不是 JSON 对象：HTTP {status} {url}；"
+                f"响应片段：{snippet!r}",
+                url=url, status=status, snippet=snippet,
+                cf_mitigated=cf_mitigated)
+        return data
 
     # ------------------------------------------------------------------
     def ensure_logged_in(self, page, expected_url_pattern: str) -> bool:
