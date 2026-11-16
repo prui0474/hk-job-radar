@@ -245,6 +245,153 @@ def test_site_label_contract_temp_normalizes_to_contract():
     assert extract_site_job_type("This is a Contract/Temp job") == "contract"
 
 
+# ---------------------------------------------------------------------------
+# 早期职业 / 兼职 / 毕业生项目 压过站点的 Full time 标签（2026-11-16 加）
+#
+# 背景：Workday 的 timeType 只表达工时长短，不表达雇佣性质。实测 191 条 Workday
+# 岗位的 job_type 100% 是 "full time"，其中包含 "Co-op Internship 2027" 和 13 条
+# "(Contract)" / "(1-year contract)"。旧规则只在标题出现 intern 类词时豁免
+# full time 标签，于是下面这些真实的实习/兼职岗被整批误杀。
+#
+# ★ 反向守护（本组最后两条）：豁免必须只认「早期职业证据」，不能把普通全职、
+#   暑期校招全职（Summer Full-time Analyst）或理财销售培训生一起放进来。
+# ---------------------------------------------------------------------------
+_EARLY_CAREER_TITLES = [
+    "Data Analyst Intern",
+    "Summer Intern - Data Science",
+    "數據分析實習生",
+    "Summer Analyst",                     # 投行暑期实习的标准命名
+    "Summer Associate",
+    "Data Science Placement Student",
+    "Industrial Placement",
+    "Placement Year Student",
+    "Working Student - Data",
+    "Student Helper",
+    "Student Assistant",
+    "Apprentice Data Analyst",
+    "Off-cycle Analyst",
+    "Traineeship",
+]
+
+_PARTTIME_TITLES = [
+    "Part-time Data Analyst",
+    "Data Analyst (Part Time)",
+    "兼職數據分析員",
+    "数据分析师（兼职）",
+]
+
+_GRADUATE_TITLES = [
+    "FLAME Management Trainee Program",   # 实测被站点标 Full time 的 Sun Life 毕业生项目
+    "Graduate Trainee",
+    "Management Trainee",
+]
+
+
+def test_early_career_titles_classified_as_internship():
+    """两种来源都要判成实习：卡片没标类型、卡片标了 Full time。"""
+    for title in _EARLY_CAREER_TITLES:
+        assert KeywordFilter.classify_posting(_job(title)) == "internship", title
+        assert KeywordFilter.classify_posting(
+            _job(title, site_type="full time")) == "internship", title
+
+
+def test_parttime_titles_classified_as_parttime():
+    for title in _PARTTIME_TITLES:
+        assert KeywordFilter.classify_posting(_job(title)) == "part time", title
+        assert KeywordFilter.classify_posting(
+            _job(title, site_type="full time")) == "part time", title
+
+
+def test_graduate_programmes_classified_against_fulltime_label():
+    """毕业生项目必须走到 graduate programme 分支，而不是被 full time 标签早退掉。
+
+    这是「配置说允许、代码判不出」的那个 bug：allowed_job_type_classes() 无条件
+    放行 graduate programme，但如果 classify_posting 早退返回 full time，
+    这个放行永远不生效。
+    """
+    for title in _GRADUATE_TITLES:
+        assert KeywordFilter.classify_posting(_job(title)) == "graduate programme", title
+        assert KeywordFilter.classify_posting(
+            _job(title, site_type="full time")) == "graduate programme", title
+
+
+def test_graduate_programme_excluded_by_config_not_by_fulltime_early_return():
+    """用户配置排除 graduate programme 时结果是被排除——但要能证明走的是
+    graduate programme 分支（job_type 写回的值就是证据）。"""
+    cfg = _cfg(exclude_job_type_classes=["graduate programme"])
+    for title in _GRADUATE_TITLES:
+        job = _job(title, site_type="full time")
+        assert KeywordFilter(cfg).filter([job]) == [], title
+        assert job.job_type == "graduate programme", title
+
+
+def test_body_evidence_overrides_fulltime_site_label():
+    """标题没写，但 JD 里写明实习/兼职 → 也要救回来（匹配范围扩到正文）。"""
+    assert KeywordFilter.classify_posting(_job(
+        "Data Analyst", "6-month internship, 20 hours per week",
+        site_type="full time")) == "internship"
+    assert KeywordFilter.classify_posting(_job(
+        "Business Intelligence Analyst", "This is a part-time role, 3 days per week",
+        site_type="full time")) == "part time"
+
+
+def test_body_evidence_does_not_override_seniority_in_title():
+    """正文里的 Senior 仍然不算数：职级词只看标题这条没被放宽。"""
+    assert KeywordFilter.classify_posting(_job(
+        "Data Analyst", "You will report to the Senior Manager of Analytics")) == ""
+
+
+def test_sales_trap_not_rescued_by_fulltime_exemption():
+    """理财/保险销售话术岗带 Trainee，但它是真全职销售，不能被毕业生项目豁免放进来。"""
+    for title in ["Management Trainee, Wealth Management",
+                  "理財顧問 Management Trainee",
+                  "Graduate Trainee – Private Wealth Management"]:
+        assert KeywordFilter.classify_posting(
+            _job(title, site_type="full time")) == "full time", title
+
+
+def test_title_contract_marker_beats_fulltime_site_label():
+    """标题写着 "(1-year contract)" / "(6 Months)" 的岗位：站点标 Full time，
+    但按有结束日的合同制记 contract（是否放行仍由 config 决定）。"""
+    for title in ["Data Analyst (1-year contract)", "Data Analyst (6 Months)",
+                  "Data Analyst (12 months contract)"]:
+        assert KeywordFilter.classify_posting(
+            _job(title, site_type="full time")) == "contract", title
+
+
+def test_title_contract_marker_not_used_without_site_label():
+    """无站点标签时不要把 "(1-year contract)" 判成 contract：
+    默认 student 配置只允许 internship/part time，判成 contract 会把现在
+    「类型不可确认→保留」的岗位变成剔除，属于新增误杀。"""
+    for title in ["Data Analyst (1-year contract)", "Data Analyst (6 Months)"]:
+        assert KeywordFilter.classify_posting(_job(title)) == "", title
+
+
+def test_fulltime_gate_not_weakened():
+    """★ 反向守护：这次改动不能把全职闸门拆掉。"""
+    cfg = _cfg(keywords=["data", "analyst", "manager", "summer"])
+    for title in ["Data Analyst", "Senior Data Analyst", "Branch Manager",
+                  "Relationship Manager", "Summer Full-time Analyst"]:
+        job = _job(title, site_type="full time")
+        assert KeywordFilter.classify_posting(job) == "full time", title
+        assert KeywordFilter(cfg).filter([job]) == [], title
+    # 无站点标签时：普通岗仍不可确认（保留交 LLM），带职级词/全职词仍是全职
+    assert KeywordFilter.classify_posting(_job("Data Analyst")) == ""
+    assert KeywordFilter.classify_posting(_job("Senior Data Analyst")) == "full time"
+    assert KeywordFilter.classify_posting(_job("Summer Full-time Analyst")) == "full time"
+
+
+def test_student_stage_keeps_early_career_and_parttime():
+    """端到端：默认 student 配置下，这些被站点标 Full time 的真实实习/兼职岗
+    必须全部留在结果里。"""
+    cfg = _cfg(keywords=["data", "analyst", "intern", "part", "summer", "student"])
+    titles = ["Data Analyst Intern", "Summer Analyst", "Part-time Data Analyst",
+              "Student Helper"]
+    jobs = [_job(t, site_type="full time") for t in titles]
+    kept = {j.title for j in KeywordFilter(cfg).filter(jobs)}
+    assert kept == set(titles)
+
+
 if __name__ == "__main__":
     _fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in _fns:

@@ -143,16 +143,39 @@ def build_jobsdb_worktype(job_types: list[str]) -> str:
 _SITE_TYPE_LABELS: dict[str, str] = {
     "internship": "internship",
     "intern": "internship",
+    "traineeship": "internship",   # 早期职业岗（与 keyword_filter 的早期职业信号同口径）
     "part time": "part time",
     "part-time": "part time",
     "parttime": "part time",
+    "兼職": "part time",
+    "兼职": "part time",
     "full time": "full time",
     "full-time": "full time",
     "fulltime": "full time",
+    "全職": "full time",
+    "全职": "full time",
     "permanent": "full time",     # 香港语境 permanent 通常=全职长工
+    # 「全职 / 兼职都行」的岗位（Workday 常见写法）：归到兼职这一侧。
+    # 站点明说可以兼职，对在读学生就是合规可投的；归 full time 会把这类
+    # 岗位整批误杀。三个写法都要认，空格归一化只处理连续空白，不处理斜杠两侧。
+    "full time / part time": "part time",
+    "full time/part time": "part time",
+    "full-time/part-time": "part time",
+    "part time / full time": "part time",
     "contract/temp": "contract",
+    "contract / temp": "contract",
+    "contract/temporary": "contract",
+    "temporary/contract": "contract",     # 有的站点把顺序写反
+    "temporary / contract": "contract",
     "contract": "contract",
+    "fixed term": "contract",
+    "fixed-term": "contract",
     "temporary": "temporary",
+    # 季节性岗位（Workday 的 timeType 里会出现）：语义上是短期散工，归 casual。
+    # ⚠️ casual 不在任何 career_stage 的默认允许集合里——加这条之前 Seasonal 卡片
+    #    返回 '' 会被当「类型不可确认」保留，加之后会被剔除。若用户想投季节工，
+    #    需要在 job_types 里显式写 casual/temporary（属配置改动，本次不动）。
+    "seasonal": "casual",
     "casual": "casual",
     "casual/vacation": "casual",
 }

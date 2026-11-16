@@ -33,6 +33,10 @@ _DEFAULT_SYNONYMS: dict[str, list[str]] = {}
 # 都不命中 → 保留（URL 过滤是主防线，这里是兜底，宁可保留模糊项交 LLM
 # 判定，也不误删）。
 #
+# ★ 站点标签（job.job_type）优先于以上全部推断，唯一例外是「站点标 Full time
+#   但标题/正文有更硬的早期职业证据」——理由见 classify_posting 与
+#   _override_fulltime_label。
+#
 # 为什么英文用 \b 词边界：裸子串 "intern" 会误伤 internal/international、
 # "coop" 会误伤 cooperative/cooperation。用词边界后 "Full-time Intern" 依然
 # 命中 intern（保留，实习合法），而 "Internal Auditor" 不会被误判成实习。
@@ -49,6 +53,40 @@ _PARTTIME_MARKERS: list[re.Pattern[str]] = [
     re.compile(r"parttime"),
     re.compile(r"兼職|兼职"),
 ]
+
+# ---------------------------------------------------------------------------
+# 早期职业信号（2026-11-16 新增）：不是字面 "intern"，但同样是「在读期间」的岗位。
+#
+# 动机：投行、英式学制与欧洲企业不用 "Intern" 命名实习——实测这些标题明明写着
+# 实习，却因为不含 intern/co-op 被判成 full time 砍掉：
+#
+#     Summer Analyst / Summer Associate        （美银、高盛的暑期实习标准命名）
+#     Data Science Placement Student / Industrial Placement / Placement Year Student
+#     Working Student - Data / Student Helper / Student Assistant
+#     Apprentice Data Analyst / Off-cycle Analyst / Traineeship
+#
+# ★ `summer` 必须与 analyst / associate **连用**：裸 summer 会把
+#   "Summer Full-time Analyst" 这类「暑期校招全职岗」也放进来，等于拆掉全职闸门。
+# ★ placement 不认裸词（"job placement service" 是猎头话术），只认
+#   industrial / student / summer placement 与 placement student/year/programme。
+# ---------------------------------------------------------------------------
+_EARLY_CAREER_MARKERS: list[re.Pattern[str]] = [
+    re.compile(r"\bsummer\s+(?:analyst|associate)\b"),
+    re.compile(r"\b(?:industrial|student|summer)\s+placement\b"),
+    re.compile(r"\bplacement\s+(?:student|year|programme|program|scheme)\b"),
+    re.compile(r"\bworking student\b"),
+    re.compile(r"\bstudent\s+(?:helper|assistant|worker)\b"),
+    re.compile(r"\bapprenticeships?\b"),
+    re.compile(r"\bapprentices?\b"),
+    re.compile(r"\boff[- ]cycle\b"),
+    re.compile(r"\btraineeships?\b"),
+]
+
+#: 「合法可投」的全部早期职业信号：字面实习 + 早期职业命名。
+#: 两者在判定上等价，所以合成一个列表，避免两个分支漏改其中一个。
+_INTERNSHIP_SIGNAL_MARKERS: list[re.Pattern[str]] = (
+    _INTERNSHIP_MARKERS + _EARLY_CAREER_MARKERS
+)
 
 # 毕业生项目（毕业后入职的全职岗）：银行管培生 / 毕业生培训计划等。
 # 它们在招聘网站上标注为 full-time，但入职时间在毕业之后（届时已持 IANG），
@@ -67,6 +105,25 @@ _FULLTIME_MARKERS: list[re.Pattern[str]] = [
     re.compile(r"fulltime"),
     re.compile(r"permanent"),             # 香港语境 permanent 通常=全职长工
     re.compile(r"全職|全职"),
+]
+
+# ---------------------------------------------------------------------------
+# 标题级合同标记（2026-11-16 新增）：只作用于**标题**，且只在站点标签为
+# Full time 时用来推翻那个标签。
+#
+# 动机：Workday 的 timeType 只表达工时长短，不表达雇佣性质——实测 191 条岗位
+# 里 13 条标题写着 "(Contract)" / "(1-year Contract)"，timeType 却全是 Full time。
+# 这类岗位是有结束日的合同制，与「长期全职」不是一回事，标成 contract 更准确
+# （是否放行由 config.allowed_job_type_classes 决定，见 filter）。
+#
+# ★ 只在站点标 Full time 的分支里用：无站点标签时把 "(1-year contract)" 判成
+#   contract，会让默认 student 配置（只允许 internship/part time）把它从「类型
+#   不可确认→保留」变成「contract→剔除」，那是新增误杀。
+# ---------------------------------------------------------------------------
+_CONTRACT_TITLE_MARKERS: list[re.Pattern[str]] = [
+    re.compile(r"\b\d+\s*[- ]?\s*(?:month|year)s?\s*contract"),
+    re.compile(r"\b\d+\s*[- ]?\s*(?:month|year)s?\s*fixed[- ]term"),
+    re.compile(r"\(\s*\d+\s*[- ]?\s*(?:months?|years?)\s*\)"),   # "(6 Months)"
 ]
 
 # ---------------------------------------------------------------------------
@@ -156,6 +213,11 @@ def _compile_direction_hints(hints: list[str]) -> list[tuple[str, re.Pattern[str
     return out
 
 
+def _hit(patterns: list[re.Pattern[str]], text: str) -> bool:
+    """text 里有没有命中 patterns 中任意一条。"""
+    return any(p.search(text) for p in patterns)
+
+
 class KeywordFilter:
     """关键词 + 同义词初筛器。"""
 
@@ -213,41 +275,84 @@ class KeywordFilter:
         site = (getattr(job, "job_type", "") or "").strip().lower()
         title = (job.title or "").lower()
         body = (job.description_snippet or "").lower()
+        # 正文只在「推翻 Full time 标签」这一层参与，且必须与标题合成同一个
+        # haystack 后再匹配——见 _override_fulltime_label 的注释。
+        haystack = f"{title} {body}"
 
         if site:
-            # 站点标签优先——「实习」是唯一能压过它的一层。
-            # 原因：JobsDB 会把「全职时长的实习」也标成 Full time（卡片上就印
-            # "This is a Full time job"）。若站点标签无条件优先，修好标签提取后
-            # 反而会把 Data Analyst Intern 这类岗位误杀成全职。
-            # 职级词（Senior / Manager）不享受这个豁免——见下面的注释。
-            if site == "full time" and any(p.search(title) for p in _INTERNSHIP_MARKERS):
-                return "internship"
-            return site                      # 站点标签优先，已归一化
+            # 站点标签优先，唯一例外是「站点说 Full time，但我们有更硬的证据」。
+            # 原因：Workday/JobsDB 的 timeType 只表达工时长短，不表达雇佣性质——
+            # 实测 Workday 191 条岗位的 job_type 100% 是 Full time，连
+            # "Co-op Internship 2027" 和 13 条 "(1-year contract)" 也是。
+            # 若让站点标签无条件优先，这些岗位会被整批误杀。
+            if site == "full time":
+                override = cls._override_fulltime_label(title, haystack)
+                if override:
+                    return override
+            return site
 
-        # 1) 标题里的实习/兼职信号最硬：标题写了 Intern 就是实习，不用再看别的
-        if any(p.search(title) for p in _INTERNSHIP_MARKERS):
+        # 1) 标题里的早期职业/兼职信号最硬：标题写了 Intern / Summer Analyst /
+        #    Working Student 就是早期职业岗，不用再看别的
+        if _hit(_INTERNSHIP_SIGNAL_MARKERS, title):
             return "internship"
-        if any(p.search(title) for p in _PARTTIME_MARKERS):
+        if _hit(_PARTTIME_MARKERS, title):
             return "part time"
         # 2) 正文里的实习/兼职信号次之
-        if any(p.search(body) for p in _INTERNSHIP_MARKERS):
+        if _hit(_INTERNSHIP_SIGNAL_MARKERS, body):
             return "internship"
-        if any(p.search(body) for p in _PARTTIME_MARKERS):
+        if _hit(_PARTTIME_MARKERS, body):
             return "part time"
         # 3) 销售陷阱：理财顾问 / 财富管理培训生，实为全职销售
-        if any(p.search(title) for p in _SALES_TRAP_MARKERS):
+        if _hit(_SALES_TRAP_MARKERS, title):
             return "full time"
-
-        haystack = f"{title} {body}"
         # 4) 毕业生项目（管培生等）
-        if any(p.search(haystack) for p in _GRADUATE_PROGRAMME_MARKERS):
+        if _hit(_GRADUATE_PROGRAMME_MARKERS, haystack):
             return "graduate programme"
         # 5) 明确的全职标记
-        if any(p.search(haystack) for p in _FULLTIME_MARKERS):
+        if _hit(_FULLTIME_MARKERS, haystack):
             return "full time"
         # 6) 标题里的职级词（限标题，正文里出现毫无判定价值）
-        if any(p.search(title) for p in _SENIORITY_MARKERS):
+        if _hit(_SENIORITY_MARKERS, title):
             return "full time"
+        return ""
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def _override_fulltime_label(cls, title: str, haystack: str) -> str:
+        """站点标了 Full time 时，返回能推翻该标签的分类；推翻不了返回 ''。
+
+        ★ 匹配范围（2026-11-16 改）：早期职业/兼职/毕业生项目信号用
+          `title + description_snippet`，这样 JD 里写明 "6-month internship,
+          20 hours per week" 但标题没写的岗位也能救回来。
+        ★ 两条判定**仍然只看标题**：
+            - 销售陷阱（财富管理培训生）——正文里 "wealth management" 到处都是；
+            - 职级词（Senior / Manager）——本函数压根不用它，它只负责「剔除」，
+              不是豁免理由。
+        ★ 顺序即优先级：早期职业/兼职 > 销售陷阱 > 毕业生项目 > 合同标记。
+          销售陷阱排在毕业生项目之前：理财顾问类标题同时含 "trainee"，必须先
+          被认成销售，不能借毕业生项目豁免进来。
+        """
+        if _hit(_INTERNSHIP_SIGNAL_MARKERS, title):
+            return "internship"
+        if _hit(_PARTTIME_MARKERS, title):
+            return "part time"
+        if _hit(_INTERNSHIP_SIGNAL_MARKERS, haystack):
+            return "internship"
+        if _hit(_PARTTIME_MARKERS, haystack):
+            return "part time"
+        # 销售陷阱：标题里就是保险/理财销售话术 → 不豁免，按站点的全职走
+        if _hit(_SALES_TRAP_MARKERS, title):
+            return ""
+        # 毕业生项目：FLAME Management Trainee Program 这类被站点标 Full time 的
+        # 毕业生项目，config.allowed_job_type_classes() 是无条件放行
+        # "graduate programme" 的——代码必须能判出这一分类，否则「配置说允许、
+        # 代码判不出」。
+        if _hit(_GRADUATE_PROGRAMME_MARKERS, haystack):
+            return "graduate programme"
+        # 标题写了 "1-year contract" / "(6 Months)"：有结束日的合同制，
+        # 不是长期全职；是否放行交给 allowed_job_type_classes。
+        if _hit(_CONTRACT_TITLE_MARKERS, title):
+            return "contract"
         return ""
 
     # ------------------------------------------------------------------
@@ -330,15 +435,17 @@ class KeywordFilter:
         "Full-time Intern" 仍是实习（合法）、"Permanent Part-time" 仍是兼职、
         "Management Trainee"（即使标注 full-time）仍是毕业后入职的毕业生项目，
         都不能被「全职」标记误杀。
+        「实习」这一档同时接受早期职业命名（Summer Analyst / Placement Student /
+        Working Student / Traineeship 等），与 classify_posting 口径一致。
         """
         text = (text or "").lower()
-        if any(p.search(text) for p in _INTERNSHIP_MARKERS):
+        if _hit(_INTERNSHIP_SIGNAL_MARKERS, text):
             return "internship"
-        if any(p.search(text) for p in _PARTTIME_MARKERS):
+        if _hit(_PARTTIME_MARKERS, text):
             return "part time"
-        if any(p.search(text) for p in _GRADUATE_PROGRAMME_MARKERS):
+        if _hit(_GRADUATE_PROGRAMME_MARKERS, text):
             return "graduate programme"
-        if any(p.search(text) for p in _FULLTIME_MARKERS):
+        if _hit(_FULLTIME_MARKERS, text):
             return "full time"
         return ""
 
