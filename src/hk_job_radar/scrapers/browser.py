@@ -45,6 +45,13 @@ _CLOUDFLARE_MARKERS = (
 )
 
 
+#: 页面正在跳转时 Playwright 的报错：正在跑的 `page.evaluate` 被跳转销毁。
+#: 不是失败，等新页面加载完重发一次就好（见 fetch_json）。
+_CONTEXT_DESTROYED_RE = re.compile(
+    r"Execution context was destroyed|context was destroyed|"
+    r"because of a navigation", re.I)
+
+
 def build_proxy_args(proxy: str) -> list[str]:
     """把 browser.proxy 的取值翻译成 Chromium 的代理启动参数。
 
@@ -136,6 +143,11 @@ class BrowserManager:
         self._playwright = None
         self._contexts: dict[str, object] = {}   # source_key → BrowserContext
         self._pages: dict[str, object] = {}      # source_key → Page（每站一页复用）
+        # (source_key, host) → Page：同一 context 内一个主机一个 page。
+        # 为什么需要它：Workday 一个 source_key 服务五家不同域名的雇主，
+        # 共用一个 page 时每次换家都要 goto 到新主机，而站点自己的一次重定向
+        # 会在我们走之后才落地，把新的 goto 打断（见 _host_page）。
+        self._host_pages: dict[tuple[str, str], object] = {}
         self._ua_cache: Optional[str] = None     # 见 resolve_headless_user_agent
 
     # ------------------------------------------------------------------
@@ -354,6 +366,84 @@ class BrowserManager:
         return False
 
     # ------------------------------------------------------------------
+    def _host_page(self, source_key: str, url: str):
+        """返回 `url` 所在主机专属的 page（同一 context 内，一主机一页）。
+
+        为什么不能一个 page 跑遍所有主机（2026-11 实测）：Workday 五家雇主
+        域名各不相同，共用一个 page 时每换一家都要 goto 到新主机；而 Workday
+        站点在 `domcontentloaded` 之后还会自己再跳一次
+        （`/MFCJH_Jobs` → `/zh-CN/MFCJH_Jobs` 这种语言/路径重定向），那次跳转
+        往往在我们已经导航去下一家之后才落地，于是把新的 goto 打断，Playwright
+        抛 `Navigation ... is interrupted by another navigation`，而且错误会被
+        安到下一次 goto 头上——实测 5 家里后 4 家全部失败。
+
+        一个主机一个 page 之后，任何一次 goto 都只发生在自己主机内，跨主机
+        打断就不存在了。context（profile）仍然只有一个：不额外增加一份磁盘
+        档案，也不多一次浏览器启动。
+
+        基础 page（`launch()` 返回的那张）直接给第一个主机用：刚启动时它停在
+        `about:blank`，还没有「主机归属」，不算跨主机。
+        """
+        base = self.launch(source_key)
+        host = urlsplit(url).netloc.lower()
+        base_host = urlsplit(getattr(base, "url", "") or "").netloc.lower()
+        if not base_host or base_host == host:
+            return base
+        key = (source_key, host)
+        cached = self._host_pages.get(key)
+        if cached is not None:
+            return cached
+        page = self._contexts[source_key].new_page()
+        self._host_pages[key] = page
+        logger.debug(f"[browser] 为 {host} 新建 page（source={source_key}）")
+        return page
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _wait_page_ready(page, timeout_ms: int = 15000) -> None:
+        """等页面（可能正在跳转）把 `load` 事件走完；等不到也不报错。
+
+        给「evaluate 撞上站点自己的重定向」用：那一刻新文档还没加载完，
+        立刻重发只会再撞一次。
+        """
+        try:
+            page.wait_for_load_state("load", timeout=timeout_ms)
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _wait_url_settled(page, tries: int = 20, interval_ms: int = 100) -> None:
+        """等 `page.url` 连续两次读到的值相同，再认为导航落定。
+
+        为什么 goto 之后还要等：Workday 在 `domcontentloaded` 之后还会再跳一次
+        （`/MFCJH_Jobs` → `/zh-CN/MFCJH_Jobs`）。紧接着的 `page.evaluate` 会撞上
+        `Execution context was destroyed`——Manulife 的 `_discover_hk_facets()`
+        返回 None 就是这么来的：那次探路请求抛了异常，被 except 吞掉后直接退回
+        了「本地筛选」。
+
+        注意这道保险只覆盖「跳转很快」的那类站点。实测 Manulife / 中信银行国际
+        的这次重定向要 5 秒才发生，任何固定等待都堵不住，所以 `fetch_json` 里
+        还有一层「撞上就等页面 load 完重发一次」。
+
+        到次数上限也返回（不报错）：等不到不是错误，只是没有重定向，
+        后面的 fetch 自己有超时。
+        """
+        previous = None
+        for _ in range(tries):
+            try:
+                current = page.url or ""
+            except Exception:
+                current = ""
+            if previous is not None and current == previous:
+                return
+            previous = current
+            try:
+                page.wait_for_timeout(interval_ms)
+            except Exception:
+                return
+
+    # ------------------------------------------------------------------
     def open_origin(self, source_key: str, url: str, timeout_ms: int = 60000):
         """确保 page 停在 `url` 所在站点的页面上，返回该 page。
 
@@ -363,20 +453,32 @@ class BrowserManager:
         拒绝——连请求都不会真正发出去。Workday 的 cxs 接口不开放 CORS，
         所以只能先导航到它自己的招聘页，再 fetch 同源的 `/wday/cxs/...`。
 
-        同一站点不重复导航（page.url 的 host 相同就直接复用），这样
-        一家雇主几十条详情请求只有第一次付导航开销。
+        page 按主机分配（见 `_host_page`），所以同一站点不重复导航
+        （page.url 的 host 相同就直接复用），一家雇主几十条详情请求
+        只有第一次付导航开销。
         """
-        page = self.launch(source_key)
+        page = self._host_page(source_key, url)
         target = urlsplit(url)
-        current = urlsplit(page.url or "")
+        current = urlsplit(getattr(page, "url", "") or "")
         if (current.scheme in ("http", "https")
                 and current.netloc.lower() == target.netloc.lower()):
             return page
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
-        except Exception as exc:
-            raise BrowserFetchError(
-                f"打开目标站点页面失败：{url}（{exc}）", url=url) from exc
+        for attempt in range(2):
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+                break
+            except Exception as exc:
+                # 站点自己的一次重定向正好和这次 goto 撞上时，Playwright 报的是
+                # `Navigation ... is interrupted by another navigation`——那说明
+                # 页面还在自己跳，不是网络坏也不是配置错，重试一次就过。
+                if attempt == 0 and "interrupted by another navigation" in str(exc):
+                    page.wait_for_timeout(300)
+                    continue
+                raise BrowserFetchError(
+                    f"打开目标站点页面失败：{url}（{exc}）", url=url) from exc
+        # 等站点自己的第二次跳转落定，否则紧接着的 evaluate 会撞上
+        # `Execution context was destroyed`（见 _wait_url_settled）。
+        self._wait_url_settled(page)
         # 挑战没自动通过就不要硬发请求：那只会拿到 429，还得再等一轮。
         # quiet=True：workday 这类站点没有专门的 login_*.bat，通用的
         # 「双击 login 文件」提示对它没有用，交给调用方给更准确的话。
@@ -405,9 +507,9 @@ class BrowserManager:
         HTTP 非 2xx、fetch 抛错、JSON 解析失败都抛 BrowserFetchError，
         并把状态码与响应片段带出来，避免"静默 0 条"。
         """
-        page = self.launch(source_key)
+        page = self._host_page(source_key, url)
         target = urlsplit(url)
-        current = urlsplit(page.url or "")
+        current = urlsplit(getattr(page, "url", "") or "")
         if current.netloc.lower() != target.netloc.lower():
             raise BrowserFetchError(
                 f"页面不在目标站点上（当前 {current.netloc or '空白页'}，"
@@ -420,9 +522,27 @@ class BrowserManager:
                 "timeoutMs": timeout_ms,
             })
         except Exception as exc:
-            # fetch 自己 reject（断网、超时 abort、页面正在跳转）都会落到这里
-            raise BrowserFetchError(
-                f"页面内 fetch 失败：{url}（{exc}）", url=url) from exc
+            # 站点自己的重定向（实测 Manulife / 中信银行国际是
+            # /MFCJH_Jobs → /zh-CN/MFCJH_Jobs，而且在 domcontentloaded 之后
+            # 好几秒才发生）会把页面里的 JS 上下文销毁，正在跑的 fetch 直接
+            # reject。等新页面 load 完再发一次即可：这类检索请求是只读的，
+            # 重发没有副作用。
+            if _CONTEXT_DESTROYED_RE.search(str(exc)):
+                self._wait_page_ready(page)
+                try:
+                    result = page.evaluate(_FETCH_JSON_JS, {
+                        "url": url,
+                        "payload": payload,
+                        "timeoutMs": timeout_ms,
+                    })
+                except Exception as retry_exc:
+                    raise BrowserFetchError(
+                        f"页面内 fetch 失败：{url}（{retry_exc}）",
+                        url=url) from retry_exc
+            else:
+                # fetch 自己 reject（断网、超时 abort）都会落到这里
+                raise BrowserFetchError(
+                    f"页面内 fetch 失败：{url}（{exc}）", url=url) from exc
 
         if not isinstance(result, dict):
             raise BrowserFetchError(
@@ -479,6 +599,10 @@ class BrowserManager:
         """
         ctx = self._contexts.pop(source_key, None)
         self._pages.pop(source_key, None)
+        # 主机 page 属于这个 context，必须一起清掉：否则同一 source_key
+        # 重新 launch 后 _host_page 会命中缓存、返回已被关闭的旧 page。
+        for key in [k for k in self._host_pages if k[0] == source_key]:
+            self._host_pages.pop(key, None)
         if ctx is not None:
             try:
                 ctx.close()
@@ -496,6 +620,7 @@ class BrowserManager:
                 logger.debug(f"关闭 context {key} 时异常（忽略）：{exc}")
         self._contexts.clear()
         self._pages.clear()
+        self._host_pages.clear()
         if self._playwright is not None:
             try:
                 self._playwright.stop()

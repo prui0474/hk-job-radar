@@ -295,14 +295,13 @@ class WorkdayScraper(BaseScraper):
         try:
             listing = self._collect_postings(employer, hk_facets)
         except Exception as exc:
-            # 筛选参数名对不上时接口会 400（实测有的站点这么干）。
-            # 与其让整家公司消失，不如不要筛选、把岗位全捞回来本地筛。
-            # 状态码要从两种传输方式里统一取：浏览器走 BrowserFetchError，
-            # 退路走 urllib 的 HTTPError。
-            if self._status_of(exc) != 400 or not hk_facets:
+            # 实测有的站点对某些 facet 组合返回 400，也有的直接 500；
+            # 与其让整家公司消失，不如丢掉筛选、把岗位全捞回来本地筛。
+            if not hk_facets:
                 raise
-            logger.debug(f"[workday] {employer.get('name', key)} 不接受筛选参数 "
-                         f"{hk_facets[0]}，退回本地筛选")
+            logger.warning(
+                f"[workday] {employer.get('name', key)} 带筛选参数 {hk_facets[0]} "
+                f"请求失败（{type(exc).__name__}: {exc}），退回本地筛选")
             listing = self._collect_postings(employer, None)
         if not listing:
             return []
@@ -448,9 +447,11 @@ class WorkdayScraper(BaseScraper):
                     results[path] = None
         return results
 
-    #: 走浏览器时所有雇主共用这一个 source_key / page / profile。
+    #: 走浏览器时所有雇主共用这一个 source_key / profile。
     #: 五家域名不同，但每家用之前都会 goto 到自己站内页面（见 _request），
     #: 所以不需要五个 context——那会建五个 profile，又重又慢。
+    #: page 由 BrowserManager 按主机分开（一个 context 里一主机一页），
+    #: 否则换家时的 goto 会被上一家还没走完的重定向打断。
     BROWSER_SOURCE_KEY = "workday"
 
     def _request(self, url: str, payload: dict | None = None,

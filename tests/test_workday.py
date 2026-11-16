@@ -636,6 +636,65 @@ def test_facet_400_in_browser_mode_retries_without_filter():
     assert sc.attempts == [("primaryLocation", ["id-Hong Kong"]), None]
 
 
+def test_facet_500_also_falls_back_to_unfiltered_listing():
+    """回归：实测某些 facet 组合直接 500，不只 400。
+
+    以前只在 status == 400 时回退，500 会一路抛到 _do_fetch，整家公司归零——
+    表现就是「某家保险公司的香港岗位某天忽然一条都没有」。
+    """
+    from hk_job_radar.scrapers.browser import BrowserFetchError
+
+    class _Scraper(WorkdayScraper):
+        def __init__(self):
+            super().__init__(_cfg(), browser=_FakeBrowser([]))
+            self.attempts: list = []
+
+        def _discover_hk_facets(self, employer):       # noqa: ARG002
+            return ("locationHierarchy2", ["id-Hong Kong"])
+
+        def _collect_postings(self, employer, hk_facets):   # noqa: ARG002
+            self.attempts.append(hk_facets)
+            if hk_facets:
+                raise BrowserFetchError("页面内请求失败：HTTP 500", status=500)
+            return {"/job/1": {"title": "Data Scientist",
+                               "locationsText": "Hong Kong",
+                               "postedOn": "Posted Today"}}
+
+        def _fetch_details(self, employer, paths):      # noqa: ARG002
+            return {"/job/1": _detail_payload(title="Data Scientist", jobReqId="B1")}
+
+    sc = _Scraper()
+    jobs = sc._fetch_employer("test", EMP, now_hk() - timedelta(days=7))
+    assert [j.external_id for j in jobs] == ["test-B1"]
+    assert sc.attempts == [("locationHierarchy2", ["id-Hong Kong"]), None]
+
+
+def test_without_facets_listing_error_still_raises():
+    """没有可丢掉的筛选参数时，异常必须照旧上抛（不是所有失败都能回退）。"""
+    from hk_job_radar.scrapers.browser import BrowserFetchError
+
+    class _Scraper(WorkdayScraper):
+        def __init__(self):
+            super().__init__(_cfg(), browser=_FakeBrowser([]))
+            self.attempts: list = []
+
+        def _discover_hk_facets(self, employer):       # noqa: ARG002
+            return None
+
+        def _collect_postings(self, employer, hk_facets):   # noqa: ARG002
+            self.attempts.append(hk_facets)
+            raise BrowserFetchError("页面内请求失败：HTTP 500", status=500)
+
+    sc = _Scraper()
+    try:
+        sc._fetch_employer("test", EMP, now_hk() - timedelta(days=7))
+    except BrowserFetchError as exc:
+        assert exc.status == 500
+    else:                                              # pragma: no cover
+        raise AssertionError("没有筛选参数时不该重试，异常要原样上抛")
+    assert sc.attempts == [None], "只该尝试一次"
+
+
 def test_details_are_serial_when_browser_is_used():
     """Playwright 同步接口绑定线程：浏览器模式下详情必须串行，不能进线程池。"""
     import threading

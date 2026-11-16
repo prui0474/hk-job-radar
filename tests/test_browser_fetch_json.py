@@ -8,7 +8,10 @@
 2. POST 的 payload 原样传进页面脚本；
 3. 非 2xx / 非 JSON / fetch 抛错都要抛 BrowserFetchError，带状态码与响应片段；
 4. 页面不在目标站点上时必须直接报错（跨域 fetch 会被 CORS 挡）；
-5. open_origin 同站不重复导航、异站必须导航、挑战过不去要报错。
+5. open_origin 同一主机不重复导航、不同主机各用一张 page、挑战过不去要报错；
+6. 换主机时的 goto 被站点自己的重定向打断（interrupted by another navigation）
+   时重试一次，且导航后要等 URL 落定（否则 evaluate 撞上 execution context
+   destroyed）。
 
 兼容 pytest 与 `python tests/test_browser_fetch_json.py`。
 """
@@ -27,6 +30,7 @@ from hk_job_radar.scrapers.browser import (                           # noqa: E4
 
 URL = "https://example.wd3.myworkdayjobs.com/wday/cxs/example/External/jobs"
 ORIGIN = "https://example.wd3.myworkdayjobs.com/External"
+OTHER_ORIGIN = "https://other.wd3.myworkdayjobs.com/Experienced-Jobs"
 
 
 class _FakePage:
@@ -40,6 +44,8 @@ class _FakePage:
         self._content = content
         self.evaluate_args: list = []
         self.goto_calls: list[str] = []
+        self.wait_calls: list[int] = []
+        self.load_state_calls: list[str] = []
 
     def evaluate(self, script: str, arg=None):          # noqa: ARG002
         self.evaluate_args.append(arg)
@@ -52,6 +58,12 @@ class _FakePage:
         self.url = url
         return None
 
+    def wait_for_timeout(self, ms: int) -> None:
+        self.wait_calls.append(ms)
+
+    def wait_for_load_state(self, state: str = "load", timeout: int = 0) -> None:  # noqa: ARG002
+        self.load_state_calls.append(state)
+
     def content(self) -> str:
         return self._content
 
@@ -59,10 +71,29 @@ class _FakePage:
         return "Careers"
 
 
+class _FakeContext:
+    """假 context：只记录 new_page() 次数，返回全新的空白假 page。"""
+
+    def __init__(self) -> None:
+        self.new_page_calls = 0
+        self.pages: list[_FakePage] = []
+        self.closed = False
+
+    def new_page(self) -> _FakePage:
+        self.new_page_calls += 1
+        page = _FakePage(url="about:blank")
+        self.pages.append(page)
+        return page
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def _manager(page: _FakePage, *, source: str = "workday") -> BrowserManager:
     manager = BrowserManager(AppConfig())
-    # 预先塞进 _pages：launch() 命中就直接返回，不会去起 playwright
+    # 预先塞进 _pages / _contexts：launch() 命中就直接返回，不会去起 playwright
     manager._pages[source] = page
+    manager._contexts[source] = _FakeContext()
     return manager
 
 
@@ -144,19 +175,177 @@ def test_fetch_json_refuses_cross_origin_page():
     assert page.evaluate_args == [], "不同源时不该真的发请求"
 
 
+def test_fetch_json_retries_after_site_redirect_destroys_context():
+    """回归：Manulife / 中信银行国际在 goto 之后 5 秒才自己跳到 /zh-CN/…。
+
+    那一刻页面里的 JS 上下文被销毁，正在跑的 fetch 直接 reject。等新页面
+    load 完重发一次即可——固定等待多长都堵不住这个时序。
+    """
+    class _RedirectedPage(_FakePage):
+        def __init__(self) -> None:
+            super().__init__(result=None)
+            self.rounds = 0
+
+        def evaluate(self, script: str, arg=None):      # noqa: ARG002
+            self.evaluate_args.append(arg)
+            self.rounds += 1
+            if self.rounds == 1:
+                raise RuntimeError(
+                    "Page.evaluate: Execution context was destroyed, most likely "
+                    "because of a navigation")
+            return {"ok": True, "status": 200, "text": '{"total": 5}',
+                    "cfMitigated": ""}
+
+    page = _RedirectedPage()
+    manager = _manager(page)
+    assert manager.fetch_json("workday", URL) == {"total": 5}
+    assert page.rounds == 2, "撞上跳转应当重发一次"
+    assert page.load_state_calls == ["load"], "重发前要等新页面 load 完"
+
+
+def test_fetch_json_does_not_retry_other_errors():
+    """不是「页面正在跳转」的失败不重发：那只会白等一轮。"""
+    page = _FakePage(error=RuntimeError("net::ERR_INTERNET_DISCONNECTED"))
+    manager = _manager(page)
+    try:
+        manager.fetch_json("workday", URL)
+    except BrowserFetchError as exc:
+        assert "ERR_INTERNET_DISCONNECTED" in str(exc)
+    else:                                              # pragma: no cover
+        raise AssertionError("网络错误必须直接报错")
+    assert len(page.evaluate_args) == 1 and page.load_state_calls == []
+
+
 # ---------------------------------------------------------------------------
 # open_origin
 # ---------------------------------------------------------------------------
-def test_open_origin_navigates_once_per_site():
+def test_open_origin_does_not_navigate_twice_for_same_host():
     page = _FakePage(url="about:blank")
     manager = _manager(page)
     manager.open_origin("workday", ORIGIN)
     manager.open_origin("workday", ORIGIN)      # 同站：复用，不重复导航
     assert page.goto_calls == [ORIGIN]
+    assert manager._contexts["workday"].new_page_calls == 0
 
-    other = "https://other.wd3.myworkdayjobs.com/External"
-    manager.open_origin("workday", other)       # 换了一家雇主：必须导航
-    assert page.goto_calls == [ORIGIN, other]
+
+def test_open_origin_uses_one_page_per_host():
+    """回归：5 家雇主域名不同，共用一个 page 会让换家时的 goto 被打断。
+
+    实测报错是级联的——上一家的重定向把下一次 goto 打断，5 家里后 4 家
+    全部失败。所以一个主机必须有自己的 page（context/profile 仍只有一个）。
+    """
+    base = _FakePage(url="about:blank")
+    manager = _manager(base)
+    ctx = manager._contexts["workday"]
+
+    first = manager.open_origin("workday", ORIGIN)
+    other = manager.open_origin("workday", OTHER_ORIGIN)
+
+    assert first is base, "第一家用基础 page（启动时它还在 about:blank）"
+    assert other is not base, "换主机必须换 page"
+    assert ctx.new_page_calls == 1
+    assert base.goto_calls == [ORIGIN]
+    assert other.goto_calls == [OTHER_ORIGIN]
+
+    # 再回到第一个主机 / 第二次用第二个主机：都命中缓存，各不干扰
+    assert manager.open_origin("workday", ORIGIN) is base
+    assert manager.open_origin("workday", OTHER_ORIGIN) is other
+    assert ctx.new_page_calls == 1
+    assert base.goto_calls == [ORIGIN]
+    assert other.goto_calls == [OTHER_ORIGIN]
+
+
+def test_open_origin_retries_navigation_interrupted_by_redirect():
+    """站点自己的重定向把 goto 打断时重试一次就够，不该让整家雇主失败。"""
+    class _InterruptedOncePage(_FakePage):
+        def __init__(self) -> None:
+            super().__init__(url="about:blank")
+            self._fail = True
+
+        def goto(self, url, **kwargs):                  # noqa: ARG002
+            self.goto_calls.append(url)
+            if self._fail:
+                self._fail = False
+                raise RuntimeError(
+                    'Page.goto: Navigation to "https://other.example/x" is '
+                    'interrupted by another navigation to "https://example/x"')
+            self.url = url
+
+    page = _InterruptedOncePage()
+    manager = _manager(page)
+    got = manager.open_origin("workday", ORIGIN)
+
+    assert got is page
+    assert page.goto_calls == [ORIGIN, ORIGIN], "被打断后应当重试一次"
+    assert page.wait_calls, "重试前要先等一下，让上一次跳转走完"
+
+
+def test_open_origin_gives_up_after_second_interruption():
+    class _AlwaysInterruptedPage(_FakePage):
+        def goto(self, url, **kwargs):                  # noqa: ARG002
+            self.goto_calls.append(url)
+            raise RuntimeError("Navigation is interrupted by another navigation")
+
+    page = _AlwaysInterruptedPage(url="about:blank")
+    manager = _manager(page)
+    try:
+        manager.open_origin("workday", ORIGIN)
+    except BrowserFetchError as exc:
+        assert ORIGIN in str(exc) and "interrupted by another navigation" in str(exc)
+    else:                                              # pragma: no cover
+        raise AssertionError("重试也失败时必须报错，不能无限重试")
+    assert len(page.goto_calls) == 2
+
+
+def test_wait_url_settled_stops_when_url_repeats():
+    """URL 连续两次相同就收手：不能一直转圈等一个不会到的重定向。"""
+    class _UrlSequencePage(_FakePage):
+        def __init__(self, urls: list[str]) -> None:
+            super().__init__(url="")
+            self._urls = list(urls)
+            self.url_reads = 0
+
+        @property
+        def url(self) -> str:                           # type: ignore[override]
+            self.url_reads += 1
+            # 按顺序取；取完就停在最后一个值上（真实页面不会凭空变回旧 URL）
+            return self._urls[min(self.url_reads - 1, len(self._urls) - 1)]
+
+        @url.setter
+        def url(self, value: str) -> None:
+            pass
+
+    page = _UrlSequencePage(["a", "a", "b", "b"])
+    BrowserManager._wait_url_settled(page, tries=20, interval_ms=0)
+    assert page.url_reads == 2, f"a/a 就该收手，实际读了 {page.url_reads} 次"
+    assert page.wait_calls == [0]
+
+    # 站点自己跳过一次再落定：要停在 b，而不是停在 a
+    page = _UrlSequencePage(["a", "b", "b"])
+    BrowserManager._wait_url_settled(page, tries=20, interval_ms=0)
+    assert page.url_reads == 3
+
+
+def test_wait_url_settled_gives_up_without_raising():
+    """URL 一直在变时到上限就返回，不抛异常——后面的 fetch 自己有超时。"""
+    class _ForeverChangingPage(_FakePage):
+        def __init__(self) -> None:
+            super().__init__(url="")
+            self._n = 0
+
+        @property
+        def url(self) -> str:                           # type: ignore[override]
+            self._n += 1
+            return f"https://example/{self._n}"
+
+        @url.setter
+        def url(self, value: str) -> None:
+            pass
+
+    page = _ForeverChangingPage()
+    BrowserManager._wait_url_settled(page, tries=5, interval_ms=0)
+    assert page.wait_calls == [0] * 5
+    assert page._n == 5
 
 
 def test_open_origin_raises_when_challenge_never_passes():
@@ -188,6 +377,20 @@ def test_open_origin_wraps_navigation_error():
         assert ORIGIN in str(exc) and "ERR_NAME_NOT_RESOLVED" in str(exc)
     else:                                              # pragma: no cover
         raise AssertionError("导航失败必须转成 BrowserFetchError")
+
+
+def test_close_source_drops_cached_host_pages():
+    """同一 source_key 重新 launch 后不能命中已关闭的旧 page。"""
+    base = _FakePage(url="about:blank")
+    manager = _manager(base)
+    manager.open_origin("workday", ORIGIN)
+    manager.open_origin("workday", OTHER_ORIGIN)
+    assert len(manager._host_pages) == 1
+
+    manager.close_source("workday")
+    assert manager._host_pages == {}
+    assert "workday" not in manager._pages
+    assert "workday" not in manager._contexts
 
 
 if __name__ == "__main__":
