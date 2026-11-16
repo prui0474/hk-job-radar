@@ -19,7 +19,7 @@ import json
 import re
 from datetime import datetime, timedelta
 from typing import Optional
-from urllib.parse import quote_plus
+from urllib.parse import parse_qsl, quote_plus, urlencode, urlsplit, urlunsplit
 
 from loguru import logger
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -39,17 +39,49 @@ BASE_URL = "https://hk.jobsdb.com"
 
 # 搜索 URL 模板：{kw} 为 URL 编码后的关键词，{loc} 为 URL 编码后的地点，
 # {wt} 为岗位类型过滤参数（由 build_jobsdb_worktype 动态生成，如 &worktype=243%2C245）。
+#
+# ★ sortmode=ListedDate 不能省（2026-11 实测）：
+#   JobsDB 搜索结果默认按「相关性 + 推广位」混排，不按发布时间。实测第一页
+#   20 张卡片的时间是 18d/14d/17d/18d/4d/17d/4h/13d/... —— 27 天的老岗排在
+#   第 11 位。本项目的 max_job_age_days 是 2，不排序的话一页抓回来九成会被
+#   新鲜度过滤剔掉。加 sortmode=ListedDate 后前 10 张变成 4h/4h/5h/8h/8h/2d/...，
+#   新鲜岗位从 1/20 提到 6/19。
+#   同类参数实测：&sort=date 和 &sort=ListedDate 都会被 302 丢掉，只有
+#   sortmode=ListedDate 能活到跳转后的 SEO 短链接里（SEEK 系参数名）。
+#
 # 首页用这个查询 URL（JobsDB 会 302 跳转到 SEO 短链接，形如
-#   https://hk.jobsdb.com/data-scientist-jobs/in-Hong-Kong-SAR/part-time ）；
-# 翻页则必须基于跳转后的 SEO 短链接追加 ?page=N——
+#   https://hk.jobsdb.com/data-scientist-jobs/in-Hong-Kong-SAR/part-time?sortmode=ListedDate ）；
+# 翻页则必须基于跳转后的 SEO 短链接设置 ?page=N（见 _page_url）——
 # 若直接往查询 URL 加 &page=N，会被重定向回第 1 页（已实测）。
-SEARCH_URL = BASE_URL + "/jobs?keywords={kw}&location={loc}{wt}"
+SEARCH_URL = BASE_URL + "/jobs?keywords={kw}&location={loc}&sortmode=ListedDate{wt}"
 
-# 每个关键词每次抓的页数。增量模式下 JobsDB 按时间排序，最新岗位都在
-# 第 1 页，翻后页只会抓到几天前的旧岗位（会被时间窗过滤）却照样消耗
-# 每日页数配额——所以取 1 页最划算。（若重置数据库需要重新 7 天回填，
+# 每个关键词每次抓的页数。默认排序是相关性，最新岗位不会天然堆在第 1 页，
+# 所以第 1 页只吃「第一页里恰好新鲜的」那一部分；翻后页的成本（配额 + 封号
+# 风险）目前不划算，仍取 1 页。（若重置数据库需要重新 7 天回填，
 # 临时改回 3 即可；回填已完成，日常保持 1）
 MAX_PAGES_PER_KEYWORD = 1
+
+
+def _page_url(seo_base: str, page_no: int) -> str:
+    """在跳转后的 SEO 短链接上设置第 N 页，**保留原有 query 参数**。
+
+    ★ 为什么不能只取 `url.split("?")[0]` 再拼 `?page=N`：
+      302 后的 SEO 短链接长这样 ——
+        https://hk.jobsdb.com/data-analyst-jobs/in-Hong-Kong-SAR?sortmode=ListedDate&worktype=243%2C245
+      把 query 整段扔掉的话，第 2 页就悄悄退回默认的「相关性排序」，
+      拿回来的是十几二十天前的老岗位（MAX_PAGES_PER_KEYWORD 改成 >1 时才会
+      暴露，而那时没人会想到排序参数是被翻页丢掉的）。
+
+    用 urlsplit/parse_qsl/urlencode 而不是字符串拼接，是为了：
+    - 先删掉原有的 `page` 键再补新的，避免出现 `...?page=1&page=2`；
+    - 已有的 %2C 这类转义经过 decode/encode 后保持不变，不会被二次转义成 %252C。
+    """
+    parts = urlsplit(seo_base)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+             if k != "page"]
+    query.append(("page", str(page_no)))
+    return urlunsplit(parts._replace(query=urlencode(query)))
+
 
 # 以下选择器基于 2026-10 实测的 JobsDB 真实页面结构（data-automation 属性）。
 # 站点改版时只需修补这里，一行一个。
@@ -153,8 +185,9 @@ class JobsDBScraper(BaseScraper):
                         kw=quote_plus(keyword), loc=quote_plus(self.config.location),
                         wt=wt_fragment)
                 else:
-                    # 翻页必须基于 SEO 短链接追加 ?page=N（实测查询 URL 的 &page 会被丢弃）
-                    url = f"{seo_base}?page={page_no}" if seo_base else \
+                    # 翻页必须基于 SEO 短链接设置 ?page=N（实测查询 URL 的 &page 会被丢弃）。
+                    # 短链接里的 sortmode / worktype 要原样带着走，见 _page_url。
+                    url = _page_url(seo_base, page_no) if seo_base else \
                         SEARCH_URL.format(kw=quote_plus(keyword),
                                           loc=quote_plus(self.config.location),
                                           wt=wt_fragment)
@@ -185,9 +218,11 @@ class JobsDBScraper(BaseScraper):
                 # 每次导航之间的随机延迟：防封号核心手段
                 self.browser.human_delay()
 
-                # 首页导航后记下 SEO 短链接（去掉 query / fragment）
+                # 首页导航后记下 SEO 短链接（只去掉 fragment）。
+                # ★ 必须连 query 一起留着：sortmode=ListedDate 和 worktype 都在里面，
+                #   翻页丢了它们就等于退回无序 + 无类型过滤。
                 if seo_base is None:
-                    seo_base = page.url.split("?")[0].split("#")[0]
+                    seo_base = page.url.split("#")[0]
 
                 jobs = self._parse_listing(page, keyword)
                 fresh = [j for j in jobs
