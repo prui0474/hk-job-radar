@@ -42,7 +42,8 @@
 
 香港岗位雷达是一个**本地运行的求职助手**：定时监控 **JobsDB / LinkedIn / Indeed**
 三个招聘网站，外加**企业官网直招**（走 Workday 招聘系统的机构，内置宏利、永明、
-中信银行国际等五家，也能自己加），按你的关键词初筛，
+中信银行国际等五家，也能自己加）和**外资行校招站**（`*.tal.net`，内置 Jefferies、
+Fidelity 两家，专抓暑期实习与 Off-Cycle），按你的关键词初筛，
 用**大模型（DeepSeek）对照你的个人画像打分**，
 每天推送到**你自选的一个通道**——企业微信群机器人 / WxPusher / 邮件（HTML 岗位卡片）/
 Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾**，
@@ -63,7 +64,7 @@ Telegram（带 ✅/❌ 反馈按钮）；还附带一个**半自动投递副驾*
 
 | 痛点 | 本工具怎么解决 |
 | --- | --- |
-| 打开 JobsDB 翻一遍、再 LinkedIn、再 Indeed，两个多小时过去了，真正投出去的也就那么几份 | 一条本地流水线按点盯住三个站和企业官网，你只在日报里挑 |
+| 打开 JobsDB 翻一遍、再 LinkedIn、再 Indeed，两个多小时过去了，真正投出去的也就那么几份 | 一条本地流水线按点盯住三个站、企业官网和外资行校招站，你只在日报里挑 |
 | 翻了一整个下午，一百个岗位里真正能投的就那么几个，其余全在耗你的时间和耐心 | 关键词初筛 + LLM 相关度打分（0–100），能投的排在最前面 |
 | 重复填申请表浪费时间 | 半自动填表 + 筛选问题答案生成 |
 | （非本地学生）搞不清哪些岗位学生签能合法做 | 内置签证合规过滤 |
@@ -76,6 +77,7 @@ flowchart LR
     B[LinkedIn] --> D
     C[Indeed] --> D
     W[企业官网 Workday] --> D
+    T[校招站 tal.net] --> D
     D --> E[关键词初筛]
     E --> F[大模型打分]
     F --> G[SQLite 去重]
@@ -85,6 +87,8 @@ flowchart LR
 
 1. **抓取** — 每个开启的站都按随机的人为延迟抓，并限制单站每日页数（防封号优先）。
    企业官网走的是各家招聘系统自己的公开接口（Workday），比翻网页稳，也不用过人机验证。
+   校招站（`*.tal.net`）是外资投行 / 资管自己的校园招聘板，Summer Analyst、
+   Off-Cycle 这类实习只在上面，三大站和 Workday 都抓不到；它同样是纯 HTTP、不用浏览器。
 2. **初筛** — 先用关键词和同义词做便宜的匹配，把噪音丢掉，这样只有值得看的岗位才会
    送进大模型，省的是你自己的 API 钱。
 3. **打分** — DeepSeek 对着你的个人画像给每个岗位打 0–100 分，顺带读一遍岗位写明的
@@ -99,7 +103,8 @@ flowchart LR
 
 ### 核心优点
 
-- 🔎 **四个来源，各自可开关**——JobsDB / LinkedIn / Indeed 三个招聘站，加上企业官网（Workday）
+- 🔎 **五个来源，各自可开关**——JobsDB / LinkedIn / Indeed 三个招聘站，加上企业官网（Workday）
+  与外资行校招站（`*.tal.net`，Jefferies / Fidelity 的暑期实习）
 - 🧠 **LLM 打分**（DeepSeek，OpenAI 兼容，想换别家也行）：按你的画像逐条打分，附一句理由
 - 📬 **四个推送通道，爱开几个开几个**——企业微信 / WxPusher / 邮件（HTML 卡片）/ Telegram，
   同时开也行（Telegram 看推送、邮件留个档）。其中 Telegram 多一层反馈：日报里每个岗位都带
@@ -136,8 +141,9 @@ flowchart LR
 
 - 有一定技术门槛——不过「一键安装脚本」已省去大部分；仍需自备 DeepSeek key 和配好一个推送通道
   （Windows 双击 `install.bat`，macOS 双击 `install.command`，流程一样）
-- 依赖第三方站点，抓取可能被限流或临时封锁。四个站点都不需要账号；
-  LinkedIn 被节流时登录一次会更稳，JobsDB 和 Indeed 只要过一次人机验证（企业官网连这一步都没有）
+- 依赖第三方站点，抓取可能被限流或临时封锁。五个来源都不需要账号；
+  LinkedIn 被节流时登录一次会更稳，JobsDB 和 Indeed 只要过一次人机验证
+  （企业官网与校招站连这一步都没有）
 - 被拦下的表现是「跑完了，但一个岗位都没有」，不报错。这时先看[教程 · 附 C](docs/getting-started-zh.md#附-c常见问题)；
   如果还是 0 个，多半是出口 IP 被这个站标成了高风险，换一个网络再试
 - 不保证 100% 覆盖——它是「雷达」，不是「全量抓取」
@@ -156,6 +162,7 @@ flowchart LR
 | 抓岗位 | `hk.indeed.com` | 开启 Indeed |
 | 抓岗位 | `www.linkedin.com` | 开启 LinkedIn（不需要账号，被节流时登录一次更稳） |
 | 抓岗位 | 各企业自己的招聘域名（如 `*.myworkdayjobs.com`） | 开启「企业官网」来源 |
+| 抓岗位 | 外资行校招站（`*.tal.net`，如 `jefferies.tal.net`） | 开启「校招站」来源（默认关闭） |
 | AI 打分 | `api.deepseek.com` | 始终需要 |
 | 推送 | `api.telegram.org` | 选了 Telegram |
 | 推送 | `qyapi.weixin.qq.com` | 选了企业微信 |
@@ -366,7 +373,9 @@ Questions, feedback, or want to help improve it: email **P_RUI@outlook.com**
 
 HK Job Radar is a **self-hosted job search assistant** for the Hong Kong market. It
 periodically watches **JobsDB / LinkedIn / Indeed** as well as **company career sites**
-running on Workday (Manulife, Sun Life, CNCBI and more built in), filters them by your
+running on Workday (Manulife, Sun Life, CNCBI and more built in) and **bank campus
+sites** on `*.tal.net` (Jefferies and Fidelity built in, for summer-analyst and
+off-cycle internships), filters them by your
 keywords, scores each one with an **LLM against your personal profile**, and
 delivers a **daily digest to whichever channel you pick** — WeCom group bot, WxPusher,
 email (HTML job cards), or Telegram (with ✅/❌ buttons). It also ships a
@@ -404,6 +413,7 @@ flowchart LR
     B[LinkedIn] --> D
     C[Indeed] --> D
     W[Company career sites] --> D
+    T[Bank campus sites] --> D
     D --> E[Keyword Filter]
     E --> F[LLM Scoring]
     F --> G[SQLite Dedup]
@@ -414,7 +424,8 @@ flowchart LR
 1. **Scrape** — each enabled source is fetched with random human-like delays and a
    per-site daily page cap (anti-ban first). Company career sites are read through
    their own public job API (Workday): steadier than page scraping, and no human
-   verification involved.
+   verification involved. Bank campus sites (`*.tal.net`) are plain server-rendered
+   HTML with no browser at all — that is where investment-bank summer-analyst roles live.
 2. **Filter** — cheap keyword + synonym matching drops noise so the LLM only sees
    worthwhile roles.
 3. **Score** — DeepSeek scores each role 0–100 against your profile and also flags any
@@ -430,7 +441,8 @@ flowchart LR
 
 ### Key features
 
-- 🔎 **4 sources, each toggleable** — JobsDB / LinkedIn / Indeed plus company career sites (Workday).
+- 🔎 **5 sources, each toggleable** — JobsDB / LinkedIn / Indeed plus company career sites (Workday)
+  and bank campus sites (`*.tal.net`: Jefferies / Fidelity summer internships).
 - 🧠 **LLM scoring** — DeepSeek (OpenAI-compatible; swap `base_url` for others), with a
   one-line reason attached to every score.
 - 📬 **4 push channels — turn on as many as you like** — WeCom group bot / WxPusher /
@@ -496,7 +508,7 @@ The tool talks to these hosts and nothing else:
 
 `hk.jobsdb.com` · `hk.indeed.com` · `www.linkedin.com` · `api.deepseek.com` ·
 your employers' own hiring domains (`*.myworkdayjobs.com` when that company runs on
-Workday) — plus one push channel (`api.telegram.org` / `qyapi.weixin.qq.com` /
+Workday, `*.tal.net` for bank campus sites) — plus one push channel (`api.telegram.org` / `qyapi.weixin.qq.com` /
 `wxpusher.zjiecode.com` / your SMTP server).
 
 **Region is decided by URL, not by your IP.** All three boards are queried through
@@ -724,7 +736,7 @@ hk_job_radar/
 ├── config.example.yaml            # config template (copy → config.yaml)
 ├── data/profiles/profile.example.yaml  # profile template (copy → profile.yaml)
 ├── src/hk_job_radar/
-│   ├── scrapers/                  # jobsdb / linkedin / indeed / workday adapters
+│   ├── scrapers/                  # jobsdb / linkedin / indeed / workday / talnet adapters
 │   ├── scoring/                   # keyword filter + LLM scorer
 │   ├── copilot/                   # application co-pilot (JobsDB wizard + form filler)
 │   ├── notify/                    # 4 push channels: base / dispatch / wecom / wxpusher / email / telegram

@@ -22,6 +22,12 @@ sources:
   # 内置几家香港机构，想加自己的目标公司改 data/workday_employers.yaml
   #（格式见 data/workday_employers.example.yaml）。
   workday: true
+  # 校招站（*.tal.net，Oleeo 平台）：外资投行 / 资管的 campus 招聘站，
+  # 含 Jefferies、Fidelity 等——Summer Analyst / Off-Cycle 这类岗位只在
+  # 这里，三大站和 Workday 都抓不到。纯 HTTP、不开浏览器、不抓详情页。
+  # 默认关闭：你关心的公司可能不在这两家，按需打开。
+  # 想加自己的目标公司改 data/talnet_boards.yaml（格式同 workday 那份）。
+  talnet: false
 
 # =============================================================================
 #  ★★ 拿到本文件后第一件事：把下面的关键词换成【你自己的求职方向】★★
@@ -176,6 +182,9 @@ daily_limits:                  # 每站点"每日抓取页数"上限（香港自
   # Workday 的一"页"= 一次岗位列表请求（20 条）。一轮完整扫描约 10–15 页，
   # 写 120 大约够扫十轮；不写这一项等于不限量，轮询间隔一短就会反复全量扫。
   workday: 120
+  # talnet 的一"页"= 一次 board 请求（50 条）。两家 board 各 1–2 页就覆盖全部
+  # 校招岗；它的 robots.txt 写了 Crawl-delay: 10，所以配额压到最低。
+  talnet: 20
 
 # ---- 关键词轮转（每轮抓几个关键词，P0-2 配套）----
 # 初筛是「逐关键词搜索」，每搜索一个关键词就吃掉 1–2 页每日配额（配额按香港自然日

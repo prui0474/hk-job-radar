@@ -196,7 +196,10 @@ def test_render_keeps_every_source_switch():
         form = w.form_from_payload(_payload(sources=sources))
         text = w.render_config_text(form)
         raw = yaml.safe_load(text)
-        assert raw["sources"] == sources, f"{name} 的开关保存后丢了：{raw['sources']}"
+        # 只比向导拥有的四个键：模板里还有向导不管理的来源（talnet，校招站），
+        # 它按设计被原样保留，不应算作「开关丢了」。
+        written = {n: bool((raw.get("sources") or {}).get(n)) for n in w.WIZARD_SOURCES}
+        assert written == sources, f"{name} 的开关保存后丢了：{raw['sources']}"
         assert w.verify_config_text(text, form) == []
 
 
@@ -233,7 +236,9 @@ def test_render_all_source_combinations_on_real_template():
             form = w.form_from_payload(_payload(sources=sources))
             text = w.render_config_text(form)
             raw = yaml.safe_load(text)
-            assert raw["sources"] == sources, f"{sources} 写入后成了 {raw['sources']}"
+            written = {n: bool((raw.get("sources") or {}).get(n))
+                       for n in w.WIZARD_SOURCES}
+            assert written == sources, f"{sources} 写入后成了 {raw['sources']}"
             assert w.verify_config_text(text, form) == []
             # 模板里的讲解注释一句都不能少（含 workday 前面那五句）
             assert text.count("#") >= template.count("#"), f"{sources} 的注释被吃掉了"

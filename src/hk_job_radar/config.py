@@ -186,8 +186,11 @@ class AppConfig:
     """全量配置（含所有默认值，保证"缺配置也能跑基础命令"）。"""
 
     sources: dict[str, bool] = field(
+        # talnet（*.tal.net 校招站）默认关闭：开源用户的目标公司各不相同，
+        # 默认开着等于替所有人去打人家服务器，按需在 config.yaml 里打开。
         default_factory=lambda: {"jobsdb": True, "linkedin": False,
-                                 "indeed": False, "workday": True}
+                                 "indeed": False, "workday": True,
+                                 "talnet": False}
     )
     keywords: list[str] = field(
         # 刻意【不预置任何默认词】：关键词是「你想找什么」，只有用户自己知道，
@@ -223,8 +226,10 @@ class AppConfig:
     human_delay_min_s: float = 2.0
     human_delay_max_s: float = 8.0
     daily_limits: dict[str, int] = field(
+        # talnet 只给 20 页：两家 board 各 1–2 页就能覆盖全部校招岗，
+        # robots.txt 又写了 Crawl-delay: 10，配额刻意压到最低。
         default_factory=lambda: {"jobsdb": 60, "linkedin": 40, "indeed": 40,
-                                 "workday": 120}
+                                 "workday": 120, "talnet": 20}
     )
     browser_headless: bool = False
     #: 无头模式下是否隐去 UA 里的 "HeadlessChrome" 字样（默认开启）。
@@ -312,7 +317,7 @@ class AppConfig:
     # ------------------------------------------------------------------
     def enabled_sources(self) -> list[str]:
         """当前启用的抓取源列表（顺序固定，便于日志对照）。"""
-        return [s for s in ("jobsdb", "linkedin", "indeed", "workday")
+        return [s for s in ("jobsdb", "linkedin", "indeed", "workday", "talnet")
                 if self.sources.get(s, False)]
 
     def all_keywords(self) -> list[str]:
