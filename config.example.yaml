@@ -169,6 +169,41 @@ location: "Hong Kong"          # 抓取目标地区
 #   - "internship"
 #   - "part time"
 #   - "contract"
+#
+# ---- 关键词闸门的两个可选收紧项（默认都留空 = 行为不变）----
+#
+# keyword_gate_skip_types：已判定为这些类型的岗位**跳过关键词匹配**，直接进 LLM 打分。
+#   解决什么问题：关键词只认「标题里有某个完整岗位名」，但很多实习标题压根不写
+#   方向词——"Marketing Intern"、"Design Intern"、"FICC Intern" 全都会被当噪音丢掉。
+#   为什么不用往 title_direction_hints 里塞 "intern"：方向词对超过 2 个字母的
+#   英文词只卡**前边界**，intern 会命中 internal / international / internet。
+#   按「类型」放行没有这个问题。
+#   ⚠️ 代价：开着 career_stage: student 时，实习直通等于让关键词闸门对绝大多数
+#   岗位失效，LLM 打分成本会翻几倍。所以默认空，只在你算过这笔账时再填。
+#   可填：internship / part time / contract / temporary / full time / graduate programme
+# 填法举例：
+# keyword_gate_skip_types:
+#   - "internship"
+keyword_gate_skip_types: []
+#
+# exclude_title_seniority：标题里命中这些**资历词**就直接丢弃（在关键词匹配之前，
+#   不会浪费 LLM 打分）。用途：放开全职后初筛会放进大量高管岗，投了也没戏。
+#   ★ 只填高管层（Director / VP / Head of / Chief / Principal / 總監）。
+#     不要填 manager / senior / lead——那是 3-5 年经验那一档，很多公司愿意按
+#     实习或初级录用，属于「值得试一试」的范围。
+#   ★ 只匹配标题：JD 正文里 "report to the Director" 到处都是，不能当依据。
+#   ★ 中文繁简各写一份（匹配不做繁简转换）。
+# 填法举例：
+# exclude_title_seniority:
+#   - "director"
+#   - "head of"
+#   - "vice president"
+#   - "vp"
+#   - "chief"
+#   - "principal"
+#   - "總監"
+#   - "总监"
+exclude_title_seniority: []
 
 # ---- 抓取频率与防封号（P0-2）----
 poll_interval_minutes: 30      # 轮询间隔，推荐 15-30 分钟

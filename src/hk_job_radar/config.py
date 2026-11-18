@@ -283,6 +283,27 @@ class AppConfig:
     #: 可填的分类名：internship / part time / full time / graduate programme。
     #: 默认空 = 不额外排除，行为与之前完全一致。
     exclude_job_type_classes: list[str] = field(default_factory=list)
+    #: 关键词闸门对哪些「已判定类型」直接放行（默认空 = 一律要过关键词）。
+    #: 解决什么问题：关键词表只认「标题/摘要含某个完整岗位名」，但很多岗位的标题
+    #: 压根不写方向词——`Marketing Intern`、`Design Intern`、`FICC Intern` 都是实习，
+    #: 却因为不含 data/AI 这类词被整批丢掉。往方向词里塞 "intern" 不是办法：
+    #: 方向词对超过 2 个字母的 ASCII 词只卡前边界，intern 会命中 internal /
+    #: international / internet。改成按「类型」放行更准：只要已判定为 internship，
+    #: 就不再看关键词，直接交给 LLM 按画像判断相关性。
+    #: ★ 默认空 = 行为与之前完全一致（开源用户不受任何影响）。之所以默认关：
+    #:   开源用户开着 career_stage: student 时，实习直通等于让关键词闸门对绝大
+    #:   多数岗位失效，LLM 打分成本会翻几倍——这是个人取舍，不该替他做。
+    #: 可填的分类名同 exclude_job_type_classes：internship / part time / full time /
+    #: graduate programme / contract / temporary。
+    keyword_gate_skip_types: list[str] = field(default_factory=list)
+    #: 标题资历词黑名单：命中即丢弃，发生在关键词匹配之前（默认空 = 不剔）。
+    #: 解决什么问题：放开全职后，初筛放行的岗位里大半是高管岗（Director / VP /
+    #: Head of），投了也没戏，白花一次 LLM 打分，日报也被稀释。
+    #: ★ 只该填**高管层**的词。Manager / Senior / Lead 属于 3-5 年经验那一档，
+    #:   那正是「愿意试一试」的范围（对方可能按实习/初级录用），不要填进来。
+    #: ★ 只匹配标题，不匹配正文：JD 里 "report to the Director" 满天飞。
+    #: ★ 默认空 = 行为与之前完全一致（开源用户不受任何影响）。
+    exclude_title_seniority: list[str] = field(default_factory=list)
     #: 标题方向词直通（2026-10-25 新增）。
     #: 解决什么问题：关键词初筛只认「标题/摘要含关键词」，但招聘站上的真实标题
     #: 写法千差万别——`AI R&D Engineering Intern` 不含 `ai engineer`、
@@ -603,6 +624,13 @@ def load_config(path: Path | None = None, *, require_runnable: bool = True) -> A
         str(t).strip().lower() for t in (raw.get("exclude_job_type_classes") or [])
         if str(t).strip()
     ]
+    # 类型直通：只放「已判定类型」，不做任何校验——写错最多是不生效。
+    cfg.keyword_gate_skip_types = [
+        t.lower() for t in _as_str_list(raw.get("keyword_gate_skip_types"))
+    ]
+    # 资历词黑名单：保留大小写原样（编译正则时由 _compile_direction_hints 处理），
+    # 但中文繁简都要写，因为匹配不做繁简转换。
+    cfg.exclude_title_seniority = _as_str_list(raw.get("exclude_title_seniority"))
 
     cfg.notify = _parse_notify(raw)
     cfg.feedback_poll_seconds = int(raw.get("feedback_poll_seconds", cfg.feedback_poll_seconds))

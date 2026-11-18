@@ -218,6 +218,20 @@ def _hit(patterns: list[re.Pattern[str]], text: str) -> bool:
     return any(p.search(text) for p in patterns)
 
 
+def _first_hit(
+    patterns: list[tuple[str, re.Pattern[str]]], text: str
+) -> str:
+    """返回 text 里命中的**第一个原文**；未命中返回空串。
+
+    与 _hit 的区别只在于返回值：资历词剔除的日志必须能看出是哪个词命中的
+    （"资历不符剔除（director）"），否则调配置时只能靠猜。
+    """
+    for term, pattern in patterns:
+        if pattern.search(text):
+            return term
+    return ""
+
+
 class KeywordFilter:
     """关键词 + 同义词初筛器。"""
 
@@ -241,6 +255,13 @@ class KeywordFilter:
         #: 空列表 = 关闭该功能，行为与之前完全一致。
         self._direction_hints = _compile_direction_hints(
             getattr(config, "title_direction_hints", []) or []
+        )
+        #: 「标题资历词黑名单」的编译结果（见 config.exclude_title_seniority）。
+        #: 复用方向词的编译逻辑：大小写不敏感、ASCII 词只卡前边界（所以
+        #: "vice president" 不会命中 "advice president..."，而中文按子串匹配）。
+        #: 空列表 = 关闭该功能，行为与之前完全一致。
+        self._seniority_patterns = _compile_direction_hints(
+            getattr(config, "exclude_title_seniority", []) or []
         )
 
     # ------------------------------------------------------------------
@@ -363,10 +384,14 @@ class KeywordFilter:
         也就是由 career_stage 决定——在读学生剔除全职、已毕业剔除实习兼职、
         both 全放行。这样同一套代码能服务不同身份的求职者。
 
-        在此基础上还有两层可选收紧（都由配置控制，默认全关，不影响开源用户）：
+        在此基础上还有四层可选收紧（都由配置控制，默认全关，不影响开源用户）：
           - exclude_job_type_classes：额外排除某些分类（如不要管培生）；
           - job_type_policy=strict + unknown_job_type_action=drop：
-            判定不出类型时直接丢弃。
+            判定不出类型时直接丢弃；
+          - keyword_gate_skip_types：已判定为某些类型（如 internship）的岗位
+            跳过关键词匹配直接放行——标题没写方向词的实习不该被当噪音丢掉；
+          - exclude_title_seniority：标题写着 Director / VP / Head of 这类高管词
+            的岗位直接丢弃——投了也没戏，白花一次 LLM 打分。
 
         判定结果会写回 job.job_type，供入库、实时推送与日报使用。
         """
@@ -374,9 +399,12 @@ class KeywordFilter:
         type_dropped = 0
         excluded_dropped = 0
         unknown_dropped = 0
+        type_passed = 0
+        seniority_dropped = 0
         direction_passed = 0
         allowed = self.config.allowed_job_type_classes()
         excluded = set(self.config.exclude_job_type_classes)
+        skip_types = set(self.config.keyword_gate_skip_types)
         drop_unknown = (self.config.job_type_policy == "strict"
                         and self.config.unknown_job_type_action == "drop")
         for job in jobs:
@@ -395,6 +423,22 @@ class KeywordFilter:
                 unknown_dropped += 1
                 logger.debug(f"类型不可确认（strict/drop）剔除：{job.title}（{job.url}）")
                 continue
+            # A) 类型直通：已判定为这些类型的岗位不再过关键词，直接交给 LLM。
+            #    必须排在资历剔除之前：`Intern, Director's Office` 是实习，
+            #    标题里的 director 只是部门名，不能拿来当剔除理由。
+            if kind and kind in skip_types:
+                job.keyword_matched = f"类型直通: {kind}"
+                type_passed += 1
+                kept.append(job)
+                continue
+            # B) 资历剔除：标题写着 Director / VP / Head of 这类，投了也没戏。
+            #    只认标题（正文里 "report to the Director" 遍地都是），且只该配
+            #    高管层的词——Manager / Senior / Lead 属于可以试的那一档。
+            seniority = _first_hit(self._seniority_patterns, job.title or "")
+            if seniority:
+                seniority_dropped += 1
+                logger.debug(f"资历不符剔除（{seniority}）：{job.title}（{job.url}）")
+                continue
             haystack = f"{job.title} {job.description_snippet}".lower()
             matched = self._match(haystack)
             if matched:
@@ -409,13 +453,19 @@ class KeywordFilter:
                 job.keyword_matched = f"方向词直通: {hint}"
                 direction_passed += 1
                 kept.append(job)
+        # 注意：type_passed / direction_passed 是**放行**计数（已包含在 kept 里），
+        # 不能从下面的减法里扣；只有 seniority_dropped 是新增的丢弃桶。
         keyword_dropped = (len(jobs) - len(kept) - type_dropped
-                           - excluded_dropped - unknown_dropped)
+                           - excluded_dropped - unknown_dropped - seniority_dropped)
         extra = ""
         if excluded_dropped:
             extra += f"，按配置排除 {excluded_dropped} 个"
         if unknown_dropped:
             extra += f"，类型不可确认丢弃 {unknown_dropped} 个"
+        if type_passed:
+            extra += f"，类型直通放行 {type_passed} 个"
+        if seniority_dropped:
+            extra += f"，资历不符剔除 {seniority_dropped} 个"
         if direction_passed:
             extra += f"，方向词直通放行 {direction_passed} 个"
         logger.info(f"关键词初筛：{len(jobs)} → {len(kept)}"
