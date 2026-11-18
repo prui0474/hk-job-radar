@@ -354,6 +354,12 @@ class BrowserManager:
                     f"（最多 {timeout_s} 秒，不破解只等待）...")
                 warned = True
             time.sleep(3)
+        ua, clearance, hint = self._challenge_failure_diagnosis(page)
+        logger.warning(
+            f"Cloudflare 挑战 {timeout_s} 秒内没有自动通过。\n"
+            f"    UA：{ua}\n"
+            f"    cf_clearance：{clearance}\n"
+            f"    → {hint}")
         if not quiet:
             # 这条提示曾经写的是「请运行 python run.py login jobsdb」—— 对绝大多数
             # 用户等于没说：他们不会开终端。改成「双击哪个文件」，命令行写法不出现。
@@ -364,6 +370,54 @@ class BrowserManager:
                 f"（Mac 上是 login_*.command），\n"
                 f"    在弹出的浏览器里手动点一下验证，看到正常页面后关掉它，再重新启动。")
         return False
+
+    # ------------------------------------------------------------------
+    def _challenge_failure_diagnosis(self, page) -> tuple[str, str, str]:
+        """超时后取两项实测值（UA / cf_clearance），说清「差在哪」。
+
+        为什么要实测而不是直接猜：用户看到「没通过」只会反复重启。把 UA 和
+        cookie 摆出来，才能分清是「无头标记没隐去」「出口 IP 被判风险」还是
+        「旧 cookie 作废」——三种情况的下一步完全不同。
+        所有读取都兜住异常：诊断本身绝不能把整轮抓取带崩。
+        """
+        ua = "读不到"
+        try:
+            value = page.evaluate("navigator.userAgent")
+            if value:
+                ua = str(value)[:100]
+        except Exception:  # noqa: BLE001 - 页面正在跳转等，读不到就如实说读不到
+            pass
+
+        clearance = "没有"
+        try:
+            for cookie in page.context.cookies() or []:
+                if cookie.get("name") != "cf_clearance":
+                    continue
+                expires = cookie.get("expires", -1)
+                if expires in (None, -1, 0):
+                    # -1 = 会话级 cookie，关掉浏览器就没了
+                    clearance = "有（会话级，关掉浏览器就失效）"
+                else:
+                    clearance = ("有，" + time.strftime(
+                        "%Y-%m-%d %H:%M", time.localtime(float(expires))) + " 到期")
+                break
+        except Exception:  # noqa: BLE001 - 拿不到 cookie 不该影响主流程
+            clearance = "读不到"
+
+        if "HeadlessChrome" in ua:
+            hint = ("UA 里还带着 HeadlessChrome —— 无头标记没隐去，"
+                    "检查 config.yaml 里 browser.hide_headless 是不是 true。")
+        elif ua == "读不到":
+            hint = ("读不到页面 UA，判断不了是无头标记还是出口 IP 问题；"
+                    "先确认 config.yaml 里 browser.hide_headless 是 true。")
+        elif clearance.startswith("有"):
+            hint = ("档案里有 cf_clearance 却仍被拦 —— 通常是出口 IP 或 UA 变了"
+                    "（换网络 / 换 SIM / 浏览器升级），旧 cookie 已作废，"
+                    "需要手动过盾一次。")
+        else:
+            hint = ("UA 里没有 HeadlessChrome，说明标识没问题，"
+                    "更像是出口 IP 被判定为风险（换网络 / 开代理都可能）。")
+        return ua, clearance, hint
 
     # ------------------------------------------------------------------
     def _host_page(self, source_key: str, url: str):

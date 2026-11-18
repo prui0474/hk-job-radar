@@ -17,6 +17,8 @@ from loguru import logger
 
 from hk_job_radar import channels
 from hk_job_radar.config import (
+    BROWSER_DIR,
+    CONFIG_PATH,
     PROJECT_ROOT,
     ConfigError,
     load_config,
@@ -32,9 +34,22 @@ from hk_job_radar.scheduler import Scheduler
 # ---------------------------------------------------------------------------
 # 各命令实现
 # ---------------------------------------------------------------------------
+def _log_config_source(cfg) -> None:
+    """在真正开始工作前，把「读的是哪份配置、实际生效的值」打到日志里。
+
+    为什么值得占一行日志：用户最常见的困惑是「我明明改了 config.yaml，怎么没生效」。
+    十有八九是改错了文件（解压套了两层目录），或者把键写在了顶层。
+    把绝对路径和生效值摆出来，用户一眼就能对上；出问题时也能直接把这一行发过来。
+    """
+    logger.info(
+        f"配置文件：{CONFIG_PATH}（browser.headless={cfg.browser_headless}，"
+        f"hide_headless={cfg.browser_hide_headless}，档案目录={BROWSER_DIR}）")
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """`hk_radar run`：启动常驻监控（推荐配合 Windows 任务计划开机自启）。"""
     config = load_config()
+    _log_config_source(config)
     require_notify(config)      # 一个可用的推送通道都没有 → 中文报错并退出
     require_llm_key(config)     # 缺 API key → 提示设置（打分会全降级，明确告知）
     db = Database(str(_db_path()))
@@ -46,6 +61,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 def cmd_report(args: argparse.Namespace) -> int:
     """`hk_radar report now`：立即生成并推送今日日报（不等定时）。"""
     config = load_config()
+    _log_config_source(config)
     require_notify(config)
     db = Database(str(_db_path()))
     # force=True：用户手动点名要一份，就给他一份（不受"今天已推过"的去重限制）
@@ -61,6 +77,7 @@ def cmd_once(args: argparse.Namespace) -> int:
     与常驻模式共用同一套配额/轮转/去重逻辑，不会多抓、也不会重复推。
     """
     config = load_config()
+    _log_config_source(config)
     require_notify(config)
     require_llm_key(config)
     db = Database(str(_db_path()))
@@ -422,6 +439,7 @@ def cmd_login(args: argparse.Namespace) -> int:
         return 1
 
     config = load_config()
+    _log_config_source(config)
     from hk_job_radar.scrapers.browser import BrowserManager
 
     # 换一种登录方式（--cookie）：不重新登录、不碰 reCAPTCHA，直接搬运
@@ -881,7 +899,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_stats.set_defaults(func=cmd_stats)
 
     p_doctor = sub.add_parser(
-        "doctor", help="一键自检：15 项体检，逐项告诉你哪里没配好、怎么修")
+        "doctor", help="一键自检：17 项体检，逐项告诉你哪里没配好、怎么修")
     p_doctor.add_argument("--no-llm", action="store_true",
                           help="跳过 AI 连通性实测（默认会真发一次很小请求，只消耗几个 token）")
     p_doctor.set_defaults(func=cmd_doctor)

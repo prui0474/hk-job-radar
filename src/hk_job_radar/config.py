@@ -522,6 +522,81 @@ def _parse_notify(raw: dict) -> NotifyConfig:
     return nc
 
 
+#: `browser:` 段认识的键 → 写错位置时给出的正确示例（缩进两个空格）。
+#: 只保留这四个：多写一个都会让「拼错」与「写错段」的提示分不清。
+_BROWSER_SECTION_KEYS: dict[str, str] = {
+    "headless": "  headless: true",
+    "hide_headless": "  hide_headless: true",
+    "cloudflare_wait_seconds": "  cloudflare_wait_seconds: 45",
+    "proxy": '  proxy: ""',
+}
+
+#: YAML 里被引号包起来的布尔值：旧版本用 bool("false") → True，设置会反着生效。
+_STRING_BOOLS: dict[str, bool] = {
+    "true": True, "yes": True, "1": True,
+    "false": False, "no": False, "0": False,
+}
+
+
+def _as_bool(value: object, default: bool, key: str) -> bool:
+    """把配置里的布尔值按「人的意思」解析，而不是按 Python 的真假值。
+
+    背景（开源用户实测）：写 `hide_headless: "false"` 时，引号让 YAML 给出的是
+    字符串 "false"，`bool("false")` 是 True —— 用户以为关掉了，实际反而打开了。
+    这里对 true/false/yes/no/1/0 按字面解析，并提示他去掉引号；其它字符串
+    （比如 "maybe"）保持旧行为，不额外处理。
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in _STRING_BOOLS:
+            parsed = _STRING_BOOLS[text]
+            logger.warning(
+                f"config.yaml 的 browser.{key} 写成了带引号的字符串 \"{value}\"："
+                f"YAML 里布尔值不需要引号，加了引号就变成文字。"
+                f"旧版本会把 \"false\" 当成 true（设置反着生效），"
+                f"这次已按字面意思解析为 {parsed}。"
+                f"建议改成不带引号的 {'true' if parsed else 'false'}。")
+            return parsed
+    return bool(value)
+
+
+def _check_browser_key_placement(raw: dict) -> None:
+    """browser 段的键写到顶层 → 直接报错，而不是静默用默认值。
+
+    背景（开源用户 Kevin）：他把 hide_headless 写在 config.yaml 顶层，
+    程序只认 browser: 段里的那份，于是「改了配置却没生效」，日志里反而出现
+    「hide_headless 为 false」——因为默认值是 True 以外的路径要显式写 false
+    才会出现，用户完全看不懂。宁可启动即失败，也不要静默。
+    """
+    stray = [key for key in _BROWSER_SECTION_KEYS if key in raw]
+    if not stray:
+        return
+    blocks = []
+    for key in stray:
+        blocks.append(
+            f"config.yaml 顶层的 {key} 不会被读取——它必须缩进两个空格写在 "
+            f"browser: 段里。\n"
+            f"正确的写法：\n"
+            f"browser:\n"
+            f"{_BROWSER_SECTION_KEYS[key]}\n"
+            f"（你现在写成了顶层键，程序静默用了默认值，所以设置看起来没生效。）")
+    raise ConfigError("\n\n".join(blocks))
+
+
+def _warn_unknown_browser_keys(br: dict) -> None:
+    """browser 段里出现不认识的键 → 警告，并列出认识的键（多半是拼错）。"""
+    unknown = [str(key) for key in br if key not in _BROWSER_SECTION_KEYS]
+    if not unknown:
+        return
+    logger.warning(
+        f"config.yaml 的 browser 段里有不认识的键：{'、'.join(unknown)}。"
+        f"这些键会被忽略。认识的键只有 4 个：headless、hide_headless、"
+        f"cloudflare_wait_seconds、proxy。"
+        f"拼写检查一下（是 hide_headless，中间那个下划线不能少）。")
+
+
 def load_config(path: Path | None = None, *, require_runnable: bool = True) -> AppConfig:
     """读取 config.yaml → AppConfig。
 
@@ -547,6 +622,9 @@ def load_config(path: Path | None = None, *, require_runnable: bool = True) -> A
 
     if not isinstance(raw, dict):
         raise ConfigError("config.yaml 顶层必须是键值对结构，请对照 config.example.yaml 检查。")
+
+    # 写错段 = 改了不起作用，必须当场说清；放在最前面，连只读命令也拦。
+    _check_browser_key_placement(raw)
 
     cfg = AppConfig()
     cfg.sources = {**cfg.sources, **(raw.get("sources") or {})}
@@ -596,8 +674,15 @@ def load_config(path: Path | None = None, *, require_runnable: bool = True) -> A
     }} if isinstance(raw.get("daily_limits"), dict) else cfg.daily_limits
 
     br = raw.get("browser") or {}
-    cfg.browser_headless = bool(br.get("headless", cfg.browser_headless))
-    cfg.browser_hide_headless = bool(br.get("hide_headless", cfg.browser_hide_headless))
+    if not isinstance(br, dict):
+        raise ConfigError(
+            "config.yaml 的 browser 段必须是键值对结构（对照 config.example.yaml 检查缩进）。")
+    _warn_unknown_browser_keys(br)
+    cfg.browser_headless = _as_bool(
+        br.get("headless", cfg.browser_headless), cfg.browser_headless, "headless")
+    cfg.browser_hide_headless = _as_bool(
+        br.get("hide_headless", cfg.browser_hide_headless),
+        cfg.browser_hide_headless, "hide_headless")
     cfg.cloudflare_wait_seconds = int(br.get("cloudflare_wait_seconds", cfg.cloudflare_wait_seconds))
     cfg.browser_proxy = str(br.get("proxy", cfg.browser_proxy) or "").strip()
 

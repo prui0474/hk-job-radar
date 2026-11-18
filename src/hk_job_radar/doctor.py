@@ -5,7 +5,7 @@
 Mac 双击打不开、群机器人 webhook 少复制一段、API key 填错了位置……每一种都会让人
 得出「这东西是坏的」的结论。翻文档要时间，问作者要等回复。
 
-doctor 把这些排查经验固化成 15 项体检：一次跑完，用中文说清「哪一项没过、
+doctor 把这些排查经验固化成 17 项体检：一次跑完，用中文说清「哪一项没过、
 为什么、具体怎么修」，最后给一句总结。
 
 设计原则
@@ -566,6 +566,51 @@ def _check_career_stage(cfg: Optional[AppConfig]) -> Check:
                  f"{cfg.career_stage} → {' / '.join(cfg.job_types)}")
 
 
+def _check_config_duplicate() -> Check:
+    """上级目录里还有一份 config.yaml → 很可能改错了文件。
+
+    背景（开源用户实测）：从 GitHub 下载的压缩包解压后会套两层同名目录，
+    用户打开的是外层那份 config.yaml，程序读的却是内层这份 —— 于是
+    「明明改了 hide_headless，日志里却说它是 false」。内容完全相同时
+    不必提醒（改哪份都一样，不会造成误解）。
+    """
+    name = "配置唯一"
+    upper = PROJECT_ROOT.parent / "config.yaml"
+    if not upper.exists():
+        return Check("配置", name, OK, "没有第二份 config.yaml")
+    if not CONFIG_PATH.exists():
+        return Check("配置", name, SKIP, "当前目录没有 config.yaml")
+    try:
+        same = upper.read_bytes() == CONFIG_PATH.read_bytes()
+    except OSError as exc:
+        return Check("配置", name, WARN, f"读上级目录的 config.yaml 失败：{exc}",
+                     "手动确认一下哪一份才是程序在用的（看下一项的路径）。")
+    if same:
+        return Check("配置", name, OK, "上级目录的同名文件内容一致")
+    return Check(
+        "配置", name, WARN, "上级目录里还有一份内容不同的 config.yaml",
+        f"上级目录里还有一份 config.yaml：{upper}\n"
+        f"程序读的是：{CONFIG_PATH}\n"
+        "解压套了两层目录时最容易改错文件。"
+        "你改的那份如果不是上面这个路径，改了不会生效。")
+
+
+def _check_headless_masking(cfg: Optional[AppConfig]) -> Check:
+    """无头模式却没隐去 HeadlessChrome → 一定会被 Cloudflare 挡住。"""
+    name = "无头标识"
+    if cfg is None:
+        return Check("配置", name, SKIP, "先修好「配置文件」")
+    if not cfg.browser_headless:
+        return Check("配置", name, OK, "有头模式，不需要隐去")
+    if cfg.browser_hide_headless:
+        return Check("配置", name, OK, "已隐去 UA 里的 HeadlessChrome")
+    return Check(
+        "配置", name, WARN, "无头模式，但 HeadlessChrome 还在 UA 里",
+        "无头模式没有隐去 UA 里的 HeadlessChrome，JobsDB / Indeed 会被 "
+        "Cloudflare 挡住（表现为跑完 0 个岗位）。\n"
+        "改法：config.yaml → browser → hide_headless: true")
+
+
 def _check_profile() -> Check:
     if not PROFILE_PATH.exists():
         return Check(
@@ -727,7 +772,7 @@ def _check_browser_dir() -> Check:
 # 汇总
 # ---------------------------------------------------------------------------
 def run_checks(*, llm_test: bool = True) -> list[Check]:
-    """跑完全部 15 项体检，顺序即展示顺序。"""
+    """跑完全部 17 项体检，顺序即展示顺序。"""
     checks: list[Check] = []
 
     checks.append(_check_python())
@@ -740,6 +785,8 @@ def run_checks(*, llm_test: bool = True) -> list[Check]:
     checks.append(config_check)
     checks.append(_check_keywords(cfg))
     checks.append(_check_career_stage(cfg))
+    checks.append(_check_config_duplicate())
+    checks.append(_check_headless_masking(cfg))
     checks.append(_check_profile())
 
     key_check, api_key = _check_api_key(cfg)
