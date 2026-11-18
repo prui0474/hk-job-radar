@@ -625,6 +625,31 @@ browser:
 凭证就作废了。程序默认已经处理了这一点（`config.yaml` 里 `browser.hide_headless`
 默认 `true`），你要是手动关过，改回来再跑一次。
 
+**Q：我改了 config.yaml，但跑起来感觉毫无变化？**
+
+先看黑窗口启动后的第一行：
+
+```
+配置文件：C:\...\hk_job_radar\config.yaml（browser.headless=True，hide_headless=True…）
+```
+
+这个路径必须和你双击的 `start.bat` 在同一层文件夹里。解压时很容易套出两层同名目录
+（`hk-job-radar-master\hk-job-radar-master`），改外层那份不会有任何效果——程序只读
+`src/` 旁边那一份。
+
+第二种情况是位置写错。`headless`、`hide_headless`、`proxy`、`cloudflare_wait_seconds`
+这几个键必须缩进两个空格放在 `browser:` 下面：
+
+```yaml
+browser:
+  headless: true
+  hide_headless: true
+```
+
+写在文件顶层、或者用 Tab 缩进，都不会被读取，程序会静默用默认值。最新版本遇到顶层
+写法会直接报错并给出正确缩进，不用你自己猜。也可以双击 `doctor.bat`，看第 9 项
+「配置唯一」（上级目录里还有一份 config.yaml 会警告）和第 10 项「无头标识」。
+
 **Q：想改找什么岗位？**
 双击 `setup.bat`，改第 1 块，保存。改完重启 `start.bat`。
 （手工改法见[附 A2](#a2-把岗位关键词换成你自己的必须做)）

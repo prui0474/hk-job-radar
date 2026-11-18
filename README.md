@@ -146,6 +146,8 @@ flowchart LR
   （企业官网与校招站连这一步都没有）
 - 被拦下的表现是「跑完了，但一个岗位都没有」，不报错。这时先看[教程 · 附 C](docs/getting-started-zh.md#附-c常见问题)；
   如果还是 0 个，多半是出口 IP 被这个站标成了高风险，换一个网络再试
+- 改了配置却看不出变化？先看启动后第一行「配置文件：…」的路径——解压套出两层同名目录时，
+  最容易改到外层那份；键写错位置（比如 `hide_headless` 写在顶层）也不会生效
 - 不保证 100% 覆盖——它是「雷达」，不是「全量抓取」
 - **关键词要靠你自己想**——它只会按你写的词去找，写得太窄就会漏。
   好消息是没有数量限制，把同义词、缩写、中英文写法都铺上去就行。
@@ -303,6 +305,8 @@ python run.py apply <job_uid>     # 投递副驾（半自动填表）
 | `keyword_rotation` | 每轮搜几个关键词（按你每天开机多久来调） |
 | `daily_limits` | 单站每个香港自然日的页数上限 |
 | `hide_headless` | 无头时隐去 UA 里的「无头」标记。默认开启；关掉后 JobsDB、Indeed 基本抓不到 |
+| `keyword_gate_skip_types` | 哪些岗位类型跳过关键词初筛、直接进 AI 打分（如 `["internship"]`）。默认空 |
+| `exclude_title_seniority` | 标题命中这些词就丢弃（如 `director`、`vice president`）。默认空；别把 `manager`、`senior` 填进来，那是 3–5 年那一档 |
 | `location` | 目标地区，默认 Hong Kong |
 | `score_threshold` / `realtime_threshold` | 60 = 进日报的分数线；80 = 抓到就单独推的分数线 |
 | `max_job_age_days` / `report_max_age_days` | 2 = 只抓最近 2 天发布的；3 = **无法复核**的站点（LinkedIn）入库超过 3 天还没推出去就不再推送 |
@@ -496,6 +500,9 @@ flowchart LR
 - **Being blocked looks like "it ran but found nothing"**, not an error. Check
   [guide · appendix C](docs/getting-started-zh.md#附-c常见问题) (Chinese). If it is
   still zero, the exit IP is the usual suspect.
+- **Changed the config but nothing happened?** Check the first line of the startup
+  log (`配置文件：…`) — with nested unzip folders it is easy to edit the outer copy,
+  and a key placed at the top level (instead of under `browser:`) is ignored.
 - **Not 100% coverage** — it's a radar, not a guarantee of every posting.
 - **Keywords are on you** — it only looks for what you write, so a narrow list means
   missed roles. There is no cap, so pile on synonyms, abbreviations and the Chinese /
@@ -659,6 +666,8 @@ Everything is in `config.yaml` (see `config.example.yaml` for commented defaults
 | `keyword_rotation` | how many keywords to search per cycle (tune to your uptime) |
 | `daily_limits` | per-site page cap per Hong Kong calendar day |
 | `hide_headless` | hide the headless marker from the UA. On by default; turning it off usually locks JobsDB and Indeed out |
+| `keyword_gate_skip_types` | job types that skip the keyword gate and go straight to AI scoring (e.g. `["internship"]`). Empty by default |
+| `exclude_title_seniority` | drop any posting whose title hits one of these words (e.g. `director`, `vice president`). Empty by default — do not add `manager` or `senior` |
 | `location` | target region |
 | `score_threshold` / `realtime_threshold` | 60 = digest threshold, 80 = push-on-sight threshold |
 | `max_job_age_days` / `report_max_age_days` | 2 = only scrape postings from the last 2 days; 3 = for sources that **cannot** be re-checked (LinkedIn), never push anything that has sat unpushed for 3 days |
